@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ECIRace - Emisor GPS</title>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 40px; background-color: #1e1e1e; color: white; }
+        button { padding: 15px 30px; font-size: 18px; cursor: pointer; background-color: #fbc02d; color: #000; border: none; border-radius: 8px; font-weight: bold; }
+        #status { margin-top: 20px; font-size: 16px; color: #aaa; }
+        .data-box { margin-top: 20px; padding: 15px; border: 1px solid #444; border-radius: 8px; background-color: #2b2b2b; }
+    </style>
+</head>
+<body>
+
+<h1>ECIRace 2D</h1>
+<p>ID Corredor: <strong id="playerId"></strong></p>
+
+<button id="startBtn" onclick="iniciarCarrera()">Conectar y Transmitir GPS</button>
+
+<div class="data-box">
+    <div id="status">Esperando inicio...</div>
+</div>
+
+<script>
+    let stompClient = null;
+    const playerId = "Jugador_" + Math.floor(Math.random() * 1000);
+    document.getElementById('playerId').innerText = playerId;
+
+    function conectarWebSocket() {
+        const socket = new SockJS('/race-ws');
+        stompClient = Stomp.over(socket);
+
+        stompClient.connect({}, function (frame) {
+            document.getElementById('status').innerText = "Conectado al servidor. Buscando GPS...";
+            document.getElementById('status').style.color = "#4CAF50";
+            iniciarGPS();
+        }, function (error) {
+            document.getElementById('status').innerText = "Error de conexión: " + error;
+            document.getElementById('status').style.color = "#f44336";
+        });
+    }
+
+    function iniciarGPS() {
+        if ("geolocation" in navigator) {
+            navigator.geolocation.watchPosition(function(position) {
+                const lat = position.coords.latitude;
+                const lon = position.coords.longitude;
+
+                document.getElementById('status').innerText = `Enviando...\nLat: ${lat.toFixed(5)}\nLon: ${lon.toFixed(5)}`;
+
+                const ubicacion = {
+                    corredorId: playerId,
+                    latitud: lat,
+                    longitud: lon
+                };
+                stompClient.send("/app/telemetry", {}, JSON.stringify(ubicacion));
+
+            }, function(error) {
+                document.getElementById('status').innerText = "Activa el GPS de tu celular: " + error.message;
+                document.getElementById('status').style.color = "#f44336";
+            }, {
+                enableHighAccuracy: true, // Obliga a usar el hardware GPS del teléfono
+                maximumAge: 0
+            });
+        } else {
+            document.getElementById('status').innerText = "Geolocalización no soportada en este navegador.";
+        }
+    }
+
+    function iniciarCarrera() {
+        document.getElementById('startBtn').disabled = true;
+        document.getElementById('status').innerText = "Conectando al backend...";
+        conectarWebSocket();
+    }
+</script>
+</body>
+</html>

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ECIRace - Dashboard Central</title>
+
+    <!-- Librerías de Mapas (Leaflet) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- Librerías de conexión WebSocket -->
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+
+    <style>
+        body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
+        #map { height: 100vh; width: 100vw; }
+        #overlay {
+            position: absolute;
+            top: 20px;
+            left: 50px;
+            z-index: 1000;
+            background-color: rgba(30, 30, 30, 0.9);
+            color: white;
+            padding: 15px 25px;
+            border-radius: 8px;
+            border: 2px solid #fbc02d;
+            box-shadow: 0px 4px 6px rgba(0,0,0,0.3);
+        }
+        h2 { margin: 0 0 10px 0; color: #fbc02d; }
+        #status { font-weight: bold; color: #ff5722; }
+    </style>
+</head>
+<body>
+
+<div id="overlay">
+    <h2>ECIRace Dashboard</h2>
+    <p>Estado de Red: <span id="status">Desconectado</span></p>
+    <p>Corredores Activos: <span id="activeCount">0</span></p>
+</div>
+
+<div id="map"></div>
+
+<script>
+
+    const map = L.map('map').setView([4.7297, -74.0433], 15);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+
+    if ("geolocation" in navigator) {
+        navigator.geolocation.getCurrentPosition(function(position) {
+            const hostLat = position.coords.latitude;
+            const hostLon = position.coords.longitude;
+
+
+            map.flyTo([hostLat, hostLon], 16);
+
+
+            L.circleMarker([hostLat, hostLon], {
+                color: '#f44336',
+                fillColor: '#f44336',
+                fillOpacity: 0.8,
+                radius: 8
+            }).addTo(map).bindPopup("<b>Puesto de Control (Tú)</b>").openPopup();
+
+        }, function(error) {
+            console.warn("No se pudo obtener la ubicación del host. Se usará la vista por defecto.");
+        });
+    }
+
+
+    const corredores = {};
+    let stompClient = null;
+
+
+    function conectarWebSocket() {
+        const socket = new SockJS('/race-ws');
+        stompClient = Stomp.over(socket);
+
+
+        stompClient.debug = null;
+
+        stompClient.connect({}, function (frame) {
+            document.getElementById('status').innerText = "En Vivo (Conectado)";
+            document.getElementById('status').style.color = "#4CAF50";
+
+
+            stompClient.subscribe('/topic/broadcast', function (mensaje) {
+                const ubicacion = JSON.parse(mensaje.body);
+                actualizarMapa(ubicacion);
+            });
+        }, function(error) {
+            document.getElementById('status').innerText = "Desconectado. Reintentando...";
+            document.getElementById('status').style.color = "#ff5722";
+            setTimeout(conectarWebSocket, 5000);
+        });
+    }
+
+
+    function actualizarMapa(ubicacion) {
+
+        console.log("Recibido de Java:", ubicacion);
+
+
+        const id = ubicacion.runnerId;
+        const lat = ubicacion.latitude;
+        const lon = ubicacion.longitude;
+
+        if (lat === undefined || lon === undefined) {
+            console.error("Error: Coordenadas indefinidas. Verifica el JSON en consola.");
+            return;
+        }
+
+        if (corredores[id]) {
+            corredores[id].setLatLng([lat, lon]);
+        } else {
+            const nuevoMarcador = L.marker([lat, lon]).addTo(map);
+            nuevoMarcador.bindPopup(`<b>${id}</b>`).openPopup();
+
+            corredores[id] = nuevoMarcador;
+            document.getElementById('activeCount').innerText = Object.keys(corredores).length;
+        }
+    }
+
+
+    conectarWebSocket();
+</script>
+</body>
+</html>
