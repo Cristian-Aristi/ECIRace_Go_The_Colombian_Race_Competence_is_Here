@@ -1,0 +1,52 @@
+# =========================================================================
+# ECIRace GO - Pipeline de Integración y Despliegue Continuo (Azure DevOps)
+# Capa de CI/CD -> Docker Host (Host de producción)
+# =========================================================================
+
+trigger:
+  branches:
+    include:
+      - main
+      - sprint2
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  mavenPomFile: 'pom.xml'
+  dockerImageName: 'ecirace-central-server'
+
+stages:
+  - stage: BuildAndTest
+    displayName: '1. Maven Build & Pruebas Unitarias / Anti-Cheat'
+    jobs:
+      - job: MavenJob
+        steps:
+          - task: JavaToolInstaller@0
+            inputs:
+              versionSpec: '21'
+              jdkArchitectureOption: 'x64'
+              jdkSourceOption: 'PreInstalled'
+
+          - task: Maven@4
+            displayName: 'Compilar y Ejecutar Pruebas de Concurrencia y Haversine'
+            inputs:
+              mavenPomFile: '$(mavenPomFile)'
+              goals: 'clean test package'
+              publishJUnitResults: true
+              testResultsFiles: '**/surefire-reports/TEST-*.xml'
+
+  - stage: DockerHostDeploy
+    displayName: '2. Empaquetado y Despliegue hacia Docker Host'
+    dependsOn: BuildAndTest
+    jobs:
+      - job: DockerBuildJob
+        steps:
+          - task: Docker@2
+            displayName: 'Construir Imagen Docker para Producción'
+            inputs:
+              command: build
+              dockerfile: '**/Dockerfile'
+              tags: |
+                latest
+                $(Build.BuildId)
