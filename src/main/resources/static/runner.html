@@ -3,78 +3,203 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECIRace - Emisor GPS</title>
+    <title>ECIRace GO - CLIENT_PLAYER</title>
     <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
-    <style>
-        body { font-family: Arial, sans-serif; text-align: center; padding: 40px; background-color: #1e1e1e; color: white; }
-        button { padding: 15px 30px; font-size: 18px; cursor: pointer; background-color: #fbc02d; color: #000; border: none; border-radius: 8px; font-weight: bold; }
-        #status { margin-top: 20px; font-size: 16px; color: #aaa; }
-        .data-box { margin-top: 20px; padding: 15px; border: 1px solid #444; border-radius: 8px; background-color: #2b2b2b; }
-    </style>
+    <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
+<header>
+    <div class="brand">
+        <span>🏁 ECIRace GO</span>
+        <span style="font-size: 0.85rem; color: var(--text-muted); font-weight: normal;">| CLIENT_PLAYER</span>
+    </div>
+    <div class="hud-badge" id="hudStatus">STANDBY</div>
+</header>
 
-<h1>ECIRace 2D</h1>
-<p>ID Corredor: <strong id="playerId"></strong></p>
+<main class="main-container">
+    <!-- Tarjeta de Identificación -->
+    <section class="card">
+        <div class="card-header">
+            <span class="card-title">Identificación del Corredor</span>
+            <span class="hud-badge" id="sourceBadge">HARDWARE GPS</span>
+        </div>
+        <div style="font-family: monospace; font-size: 1.1rem; color: var(--color-amber);">
+            ID: <strong id="runnerIdDisplay">Cargando...</strong>
+        </div>
+    </section>
 
-<button id="startBtn" onclick="iniciarCarrera()">Conectar y Transmitir GPS</button>
+    <!-- Tacómetro de Velocidad y Telemetría -->
+    <section class="card">
+        <div class="gauge-container">
+            <div class="speedometer-circle">
+                <div class="speed-value" id="speedDisplay">0.0</div>
+                <div class="speed-unit">KM / H</div>
+            </div>
+        </div>
 
-<div class="data-box">
-    <div id="status">Esperando inicio...</div>
-</div>
+        <div class="card" style="background-color: var(--bg-panel2); margin-top: 1rem;">
+            <div class="telemetry-row">
+                <span class="telemetry-label">Latitud:</span>
+                <span class="telemetry-value" id="latDisplay">--.------</span>
+            </div>
+            <div class="telemetry-row">
+                <span class="telemetry-label">Longitud:</span>
+                <span class="telemetry-value" id="lngDisplay">--.------</span>
+            </div>
+            <div class="telemetry-row">
+                <span class="telemetry-label">Precisión GPS:</span>
+                <span class="telemetry-value" id="accDisplay">-- m</span>
+            </div>
+            <div class="telemetry-row">
+                <span class="telemetry-label">Hora de Captura:</span>
+                <span class="telemetry-value" id="timeDisplay">--:--:--</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- Controles -->
+    <section class="card">
+        <div class="grid-2">
+            <button type="button" id="btnStartGps" class="btn btn-primary">📡 Iniciar GPS Real</button>
+            <button type="button" id="btnStopGps" class="btn btn-danger" disabled>🛑 Detener Rastreo</button>
+        </div>
+        <div style="margin-top: 0.75rem;">
+            <button type="button" id="btnToggleSim" class="btn btn-secondary">🎮 Activar Simulador de Ruta (Campus ECI)</button>
+        </div>
+    </section>
+
+    <!-- Registro de Eventos -->
+    <section class="card">
+        <div class="card-header">
+            <span class="card-title">Registro de Sensor</span>
+        </div>
+        <div class="log-box" id="eventLog">
+            <div class="log-entry info">[CLIENT_PLAYER] Módulo de geolocalización cargado.</div>
+        </div>
+    </section>
+</main>
 
 <script>
-    let stompClient = null;
-    const playerId = "Jugador_" + Math.floor(Math.random() * 1000);
-    document.getElementById('playerId').innerText = playerId;
+    const runnerId = "Jugador_" + Math.floor(100 + Math.random() * 900);
+    document.getElementById('runnerIdDisplay').innerText = runnerId;
 
-    function conectarWebSocket() {
-        const socket = new SockJS('/race-ws');
-        stompClient = Stomp.over(socket);
+    const hudStatus = document.getElementById('hudStatus');
+    const sourceBadge = document.getElementById('sourceBadge');
+    const speedDisplay = document.getElementById('speedDisplay');
+    const latDisplay = document.getElementById('latDisplay');
+    const lngDisplay = document.getElementById('lngDisplay');
+    const accDisplay = document.getElementById('accDisplay');
+    const timeDisplay = document.getElementById('timeDisplay');
+    const eventLog = document.getElementById('eventLog');
+    const btnStartGps = document.getElementById('btnStartGps');
+    const btnStopGps = document.getElementById('btnStopGps');
+    const btnToggleSim = document.getElementById('btnToggleSim');
 
-        stompClient.connect({}, function (frame) {
-            document.getElementById('status').innerText = "Conectado al servidor. Buscando GPS...";
-            document.getElementById('status').style.color = "#4CAF50";
-            iniciarGPS();
-        }, function (error) {
-            document.getElementById('status').innerText = "Error de conexión: " + error;
-            document.getElementById('status').style.color = "#f44336";
-        });
+    let watchId = null;
+    let simInterval = null;
+
+    // Trayecto Campus Escuela Colombiana de Ingeniería Julio Garavito
+    const mockWaypoints = [
+        { lat: 4.782800, lng: -74.043000 },
+        { lat: 4.783100, lng: -74.043200 },
+        { lat: 4.783500, lng: -74.043400 },
+        { lat: 4.783900, lng: -74.043600 },
+        { lat: 4.784300, lng: -74.043800 },
+        { lat: 4.784700, lng: -74.044000 },
+        { lat: 4.785000, lng: -74.044200 },
+        { lat: 4.785300, lng: -74.044500 }
+    ];
+    let mockIndex = 0;
+
+    function log(msg, type = 'info') {
+        const entry = document.createElement('div');
+        entry.className = `log-entry ${type}`;
+        entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        eventLog.appendChild(entry);
+        eventLog.scrollTop = eventLog.scrollHeight;
     }
 
-    function iniciarGPS() {
-        if ("geolocation" in navigator) {
-            navigator.geolocation.watchPosition(function(position) {
-                const lat = position.coords.latitude;
-                const lon = position.coords.longitude;
+    function updateUI(lat, lng, acc, speed, source) {
+        hudStatus.textContent = "GPS ACTIVO";
+        hudStatus.style.color = "var(--color-teal)";
+        sourceBadge.textContent = source;
+        sourceBadge.style.color = source === 'GPS_SIMULADOR' ? 'var(--color-amber)' : 'var(--color-teal)';
 
-                document.getElementById('status').innerText = `Enviando...\nLat: ${lat.toFixed(5)}\nLon: ${lon.toFixed(5)}`;
+        latDisplay.textContent = lat.toFixed(6);
+        lngDisplay.textContent = lng.toFixed(6);
+        accDisplay.textContent = acc ? `± ${acc} m` : 'N/A';
+        speedDisplay.textContent = speed.toFixed(1);
+        timeDisplay.textContent = new Date().toLocaleTimeString();
 
-                const ubicacion = {
-                    corredorId: playerId,
-                    latitud: lat,
-                    longitud: lon
-                };
-                stompClient.send("/app/telemetry", {}, JSON.stringify(ubicacion));
+        log(`Captura ${source}: Lat ${lat.toFixed(5)}, Lng ${lng.toFixed(5)} (${speed} km/h)`);
+    }
 
-            }, function(error) {
-                document.getElementById('status').innerText = "Activa el GPS de tu celular: " + error.message;
-                document.getElementById('status').style.color = "#f44336";
-            }, {
-                enableHighAccuracy: true, // Obliga a usar el hardware GPS del teléfono
-                maximumAge: 0
-            });
-        } else {
-            document.getElementById('status').innerText = "Geolocalización no soportada en este navegador.";
+    // GPS Hardware
+    btnStartGps.addEventListener('click', () => {
+        if (!("geolocation" in navigator)) {
+            alert("Geolocalización no soportada en este navegador.");
+            return;
         }
-    }
+        btnStartGps.disabled = true;
+        btnStopGps.disabled = false;
+        log("Iniciando sensor GPS de alta precisión...", "info");
 
-    function iniciarCarrera() {
-        document.getElementById('startBtn').disabled = true;
-        document.getElementById('status').innerText = "Conectando al backend...";
-        conectarWebSocket();
-    }
+        watchId = navigator.geolocation.watchPosition((pos) => {
+            const speedKmh = pos.coords.speed !== null && !isNaN(pos.coords.speed) ? pos.coords.speed * 3.6 : 0.0;
+            updateUI(pos.coords.latitude, pos.coords.longitude, Math.round(pos.coords.accuracy), speedKmh, 'GPS_HARDWARE');
+        }, (err) => {
+            log("Error en GPS: " + err.message, "error");
+        }, {
+            enableHighAccuracy: true,
+            maximumAge: 0,
+            timeout: 10000
+        });
+    });
+
+    btnStopGps.addEventListener('click', () => {
+        if (watchId !== null) {
+            navigator.geolocation.clearWatch(watchId);
+            watchId = null;
+        }
+        if (simInterval !== null) {
+            clearInterval(simInterval);
+            simInterval = null;
+        }
+        btnStartGps.disabled = false;
+        btnStopGps.disabled = true;
+        hudStatus.textContent = "STANDBY";
+        hudStatus.style.color = "var(--color-alert)";
+        btnToggleSim.textContent = "🎮 Activar Simulador de Ruta (Campus ECI)";
+        log("Rastreo detenido.", "warn");
+    });
+
+    // Simulador
+    btnToggleSim.addEventListener('click', () => {
+        if (simInterval !== null) {
+            clearInterval(simInterval);
+            simInterval = null;
+            btnStartGps.disabled = false;
+            btnStopGps.disabled = true;
+            btnToggleSim.textContent = "🎮 Activar Simulador de Ruta (Campus ECI)";
+            hudStatus.textContent = "STANDBY";
+            log("Simulador detenido.", "warn");
+        } else {
+            if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+            btnStartGps.disabled = true;
+            btnStopGps.disabled = false;
+            btnToggleSim.textContent = "⏹️ Detener Simulador";
+            log("Simulador de ruta iniciado.", "info");
+
+            simInterval = setInterval(() => {
+                const wp = mockWaypoints[mockIndex];
+                const jitter = (Math.random() - 0.5) * 0.00004;
+                const simulatedSpeed = 12.0 + Math.random() * 4.0;
+                updateUI(wp.lat + jitter, wp.lng + jitter, 5, simulatedSpeed, 'GPS_SIMULADOR');
+                mockIndex = (mockIndex + 1) % mockWaypoints.length;
+            }, 1500);
+        }
+    });
 </script>
 </body>
 </html>
