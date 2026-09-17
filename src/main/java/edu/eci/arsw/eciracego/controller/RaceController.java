@@ -26,10 +26,13 @@ public class RaceController {
     @MessageMapping("/telemetry")
     public void receiveCoordinate(Ubication ubication) {
         raceTaskExecutor.execute(() -> {
-            System.out.println("📍 [" + Thread.currentThread().getName() + "] Coordenada recibida de: " + ubication.getRunnerId() +
-                    " | Lat: " + ubication.getLatitude() + " | Lon: " + ubication.getLongitude());
-
             raceManager.updateUbication(ubication);
+            String statusAntiCheat = ubication.isSuspicious() ? "🚨 ANOMALÍA / TELETRANSPORTE" : "✓ LIMPIO";
+            System.out.printf("📍 [%s] Corredor: %s | Vel: %.1f km/h | Anti-Cheat: %s%n",
+                    Thread.currentThread().getName(),
+                    ubication.getRunnerId(),
+                    ubication.getSpeed(),
+                    statusAntiCheat);
 
             messagingTemplate.convertAndSend("/topic/broadcast", ubication);
         });
