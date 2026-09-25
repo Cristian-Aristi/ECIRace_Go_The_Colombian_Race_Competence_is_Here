@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ECIRace GO - Lobby de Competición</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <style>
+        .room-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            background-color: var(--bg-panel2);
+            border: 1px solid var(--border-line);
+            padding: 0.35rem 0.75rem;
+            border-radius: 999px;
+            font-size: 0.8rem;
+            font-family: monospace;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: var(--text-paper);
+        }
+        .room-pill:hover, .room-pill.active {
+            border-color: var(--color-amber);
+            background-color: rgba(232, 163, 61, 0.15);
+            color: var(--color-amber);
+        }
+    </style>
+</head>
+<body>
+<header>
+    <div class="brand">
+        <a href="index.html" style="text-decoration: none; color: inherit; display: flex; align-items: center; gap: 0.5rem;" title="Volver al Portal">
+            <span>🏁 ECIRace GO</span>
+        </a>
+        <span style="font-size: 0.85rem; color: var(--text-muted); font-weight: normal;">| LOBBY & RACER PROFILE</span>
+    </div>
+    <div style="display: flex; gap: 0.5rem; align-items: center;">
+        <button type="button" class="btn btn-secondary" id="btnLogout" style="padding: 0.25rem 0.6rem; font-size: 0.75rem; width: auto;" title="Cerrar sesión">
+            🚪 Salir
+        </button>
+        <div class="hud-badge" id="hudStatus">PILOT ONLINE</div>
+    </div>
+</header>
+
+<main class="main-container">
+
+    <section class="card">
+        <div class="card-header">
+            <span class="card-title">Perfil del Corredor</span>
+            <span class="hud-badge" id="sourceBadge" style="color: var(--color-amber); border-color: var(--color-amber);">PILOT HUD</span>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 1.25rem; margin-bottom: 1.25rem;">
+            <div class="pilot-avatar-container" id="avatarContainer">
+                <svg class="pilot-avatar-svg" width="58" height="58" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="16" y="8" width="32" height="40" rx="14" fill="#282d37" />
+                    <rect x="28" y="8" width="8" height="20" fill="#e8a33d" />
+                    <rect x="29" y="8" width="6" height="20" fill="#ffd068" />
+                    <rect x="18" y="24" width="28" height="12" rx="4" fill="#0d1117" />
+                    <rect x="20" y="26" width="10" height="3" rx="1.5" fill="#3fa796" opacity="0.7" />
+                    <rect x="24" y="37" width="16" height="8" rx="2" fill="#e0ac69" />
+                    <rect x="28" y="41" width="8" height="2" fill="#8c5832" />
+                    <path d="M12 56 C16 48, 48 48, 52 56 Z" fill="#1b1f24" />
+                    <rect x="26" y="47" width="12" height="7" fill="#e8a33d" />
+                    <rect x="15" y="7" width="34" height="42" rx="15" stroke="#e8a33d" stroke-width="2" />
+                </svg>
+            </div>
+
+            <div style="flex: 1;">
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <span id="pilotNameDisplay" style="font-size: 1.5rem; font-weight: 700; color: var(--color-amber);">Cargando...</span>
+                    <span style="color: var(--color-amber); font-size: 1.2rem;">★</span>
+                </div>
+                <div style="font-size: 0.85rem; color: var(--text-muted); font-family: monospace;" id="pilotEmailDisplay">
+                    cargando perfil...
+                </div>
+            </div>
+
+            <button type="button" class="btn btn-secondary" id="btnChangeNick" style="width: auto; padding: 0.45rem 0.9rem; font-size: 0.8rem;">
+                ✏️ Cambiar Tag
+            </button>
+        </div>
+
+        <div class="card" style="background-color: var(--bg-panel2); padding: 0.75rem 1rem;">
+            <div class="telemetry-row">
+                <span class="telemetry-label">Carreras Disputadas (RACES):</span>
+                <span class="telemetry-value" id="racesDisplay" style="color: var(--color-amber); font-weight: bold;">0</span>
+            </div>
+            <div class="telemetry-row">
+                <span class="telemetry-label">Victorias Oficiales (WINS):</span>
+                <span class="telemetry-value" id="winsDisplay" style="color: var(--color-teal); font-weight: bold;">0</span>
+            </div>
+            <div class="telemetry-row">
+                <span class="telemetry-label">Efectividad en Pista:</span>
+                <span class="telemetry-value" id="winRateDisplay">0.0%</span>
+            </div>
+            <div class="telemetry-row">
+                <span class="telemetry-label">Rango de Piloto:</span>
+                <span class="telemetry-value" id="rankBadge" style="color: var(--color-amber);">★ (ROOKIE)</span>
+            </div>
+        </div>
+    </section>
+
+    <section class="card">
+        <div class="card-header">
+            <span class="card-title">Unirse a Sala de Competición</span>
+            <span class="hud-badge" style="color: var(--color-amber); border-color: var(--color-amber);">MULTIPLAYER</span>
+        </div>
+
+        <div style="margin-bottom: 1rem;">
+            <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; font-family: monospace;">
+                CÓDIGO DE SALA (ENTER ROOM CODE):
+            </label>
+            <input
+                    type="text"
+                    id="roomInput"
+                    class="input-text"
+                    placeholder="e.g., ECI-2026 o CAMPUS-ECI"
+                    value="CAMPUS-ECI"
+                    maxlength="16"
+                    autocomplete="off"
+                    spellcheck="false"
+            />
+        </div>
+
+        <div style="margin-bottom: 1.25rem;">
+            <span style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.4rem; font-family: monospace;">
+                SALAS ACTIVAS EN EL SERVIDOR (TOCA PARA SELECCIONAR):
+            </span>
+            <div id="activeRoomsContainer" style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                <span class="room-pill active" onclick="selectRoom('CAMPUS-ECI')">🏁 CAMPUS-ECI</span>
+            </div>
+        </div>
+
+        <button type="button" id="btnJoinRace" class="btn btn-primary" style="font-size: 1.15rem; padding: 1rem; font-weight: 700;">
+            🏎️ JOIN RACE ▶
+        </button>
+    </section>
+
+    <section class="card" style="background-color: var(--bg-panel2);">
+        <div class="grid-2" style="margin-bottom: 0.75rem;">
+            <button type="button" class="btn btn-secondary" id="btnGoDashboard" style="text-decoration: none;">
+                🗺️ Ver Tablero de Esta Sala
+            </button>
+            <button type="button" class="btn btn-secondary" id="btnLeaderboard">
+                🏆 Tabla de Clasificación
+            </button>
+        </div>
+        <button type="button" class="btn btn-secondary" id="btnSettings">
+            ⚙️ Ajustes de Telemetría y Audio
+        </button>
+    </section>
+
+</main>
+
+<div class="modal-backdrop" id="changeTagModal" style="display: none;">
+    <div class="modal-content">
+        <div class="card-header">
+            <span class="card-title">Modificar Tag de Piloto</span>
+            <button type="button" id="btnCloseTagModal" style="background: none; border: none; color: var(--text-muted); font-size: 1.25rem; cursor: pointer;">✕</button>
+        </div>
+        <p style="font-size: 0.85rem; color: var(--text-muted);">
+            Ingresa tu nuevo apodo de piloto. Se conservarán tus estadísticas de carrera:
+        </p>
+        <input
+                type="text"
+                id="newTagInput"
+                class="input-text"
+                placeholder="Nuevo nombre"
+                maxlength="16"
+        />
+        <div class="grid-2">
+            <button type="button" class="btn btn-primary" id="btnSaveTag">
+                💾 Actualizar Tag
+            </button>
+            <button type="button" class="btn btn-secondary" id="btnCancelTag">
+                Cancelar
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="modal-backdrop" id="leaderboardModal" style="display: none;">
+    <div class="modal-content">
+        <div class="card-header">
+            <span class="card-title">🏆 Tabla de Clasificación</span>
+            <button type="button" id="btnCloseLeaderboard" style="background: none; border: none; color: var(--text-muted); font-size: 1.25rem; cursor: pointer;">✕</button>
+        </div>
+        <div class="card" style="background-color: var(--bg-panel2); padding: 0.5rem 1rem;">
+            <div class="telemetry-row" style="font-weight: bold; color: var(--color-amber);">
+                <span># PILOTO</span>
+                <span>VICTORIAS / CARRERAS</span>
+            </div>
+            <div class="telemetry-row">
+                <span>🥇 Daniel</span>
+                <span style="color: var(--color-teal);">48 / 125 (38.4%)</span>
+            </div>
+            <div class="telemetry-row">
+                <span>🥈 Cristian</span>
+                <span style="color: var(--color-teal);">48 / 125 (38.4%)</span>
+            </div>
+            <div class="telemetry-row">
+                <span>🥉 Santiago</span>
+                <span style="color: var(--color-teal);">48 / 125 (38.4%)</span>
+            </div>
+            <div class="telemetry-row" id="myRankRow" style="color: var(--color-amber);">
+                <span id="myRankName">Tu Piloto</span>
+                <span id="myRankStats">--</span>
+            </div>
+        </div>
+        <button type="button" class="btn btn-secondary" id="btnDoneLeaderboard">
+            Entendido
+        </button>
+    </div>
+</div>
+
+<div class="modal-backdrop" id="settingsModal" style="display: none;">
+    <div class="modal-content">
+        <div class="card-header">
+            <span class="card-title">⚙️ Ajustes de Telemetría</span>
+            <button type="button" id="btnCloseSettings" style="background: none; border: none; color: var(--text-muted); font-size: 1.25rem; cursor: pointer;">✕</button>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+            <label style="display: flex; align-items: center; gap: 0.75rem; font-size: 0.85rem; cursor: pointer;">
+                <input type="checkbox" id="chkHighAccuracy" checked style="accent-color: var(--color-amber);">
+                <span>Activar Alta Precisión GPS (enableHighAccuracy)</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 0.75rem; font-size: 0.85rem; cursor: pointer;">
+                <input type="checkbox" id="chkAudioAlerts" checked style="accent-color: var(--color-amber);">
+                <span>Alertas sonoras del Anti-Cheat</span>
+            </label>
+        </div>
+        <button type="button" class="btn btn-primary" id="btnSaveSettings">
+            💾 Guardar Preferencias
+        </button>
+    </div>
+</div>
+
+<script>
+    const activePilot = localStorage.getItem('ecirace_username');
+    if (!activePilot || activePilot.trim() === "") {
+        alert("Acceso denegado: Debes iniciar sesión o ingresar tu nombre de piloto primero.");
+        window.location.href = "index.html";
+    }
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const preselectedRoom = urlParams.get('room');
+
+    const pilotNameDisplay = document.getElementById('pilotNameDisplay');
+    const pilotEmailDisplay = document.getElementById('pilotEmailDisplay');
+    const racesDisplay = document.getElementById('racesDisplay');
+    const winsDisplay = document.getElementById('winsDisplay');
+    const winRateDisplay = document.getElementById('winRateDisplay');
+    const rankBadge = document.getElementById('rankBadge');
+    const roomInput = document.getElementById('roomInput');
+    const activeRoomsContainer = document.getElementById('activeRoomsContainer');
+    const btnJoinRace = document.getElementById('btnJoinRace');
+    const btnGoDashboard = document.getElementById('btnGoDashboard');
+    const btnLogout = document.getElementById('btnLogout');
+
+    if (preselectedRoom) {
+        roomInput.value = preselectedRoom.toUpperCase();
+    }
+
+    function selectRoom(code) {
+        roomInput.value = code;
+        document.querySelectorAll('.room-pill').forEach(el => {
+            el.classList.toggle('active', el.textContent.includes(code));
+        });
+    }
+
+    async function cargarSalasActivas() {
+        try {
+            const res = await fetch('/api/rooms');
+            if (res.ok) {
+                const rooms = await res.json();
+                if (rooms && rooms.length > 0) {
+                    activeRoomsContainer.innerHTML = '';
+                    rooms.forEach(r => {
+                        const pill = document.createElement('span');
+                        pill.className = `room-pill ${r.roomCode === roomInput.value.trim().toUpperCase() ? 'active' : ''}`;
+                        pill.innerHTML = `🏁 <strong>${r.roomCode}</strong> (${r.runnersCount || 0} 🏎️)`;
+                        pill.onclick = () => selectRoom(r.roomCode);
+                        activeRoomsContainer.appendChild(pill);
+                    });
+                }
+            }
+        } catch (e) {
+            console.warn("No se pudieron cargar salas activas del backend:", e);
+        }
+    }
+
+    async function cargarPerfil(username) {
+        pilotNameDisplay.textContent = username;
+        try {
+            const res = await fetch(`/api/auth/profile/${encodeURIComponent(username)}`);
+            if (res.ok) {
+                const profile = await res.json();
+                renderizarPerfil(profile);
+            } else {
+                const initRes = await fetch('/api/auth/guest', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: username })
+                });
+                if (initRes.ok) {
+                    const profile = await initRes.json();
+                    renderizarPerfil(profile);
+                }
+            }
+        } catch (err) {
+            renderizarPerfil({
+                username: username,
+                email: username.toLowerCase() + "@ecirace.local",
+                racesCount: 0,
+                winsCount: 0,
+                rating: 0.0
+            });
+        }
+    }
+
+    function renderizarPerfil(profile) {
+        pilotNameDisplay.textContent = profile.username;
+        pilotEmailDisplay.textContent = profile.email || (profile.username.toLowerCase() + "@ecirace.local");
+
+        const races = profile.racesCount || 0;
+        const wins = profile.winsCount || 0;
+        racesDisplay.textContent = races;
+        winsDisplay.textContent = wins;
+
+        const rate = (races > 0) ? ((wins / races) * 100).toFixed(1) : "0.0";
+        winRateDisplay.textContent = `${rate}%`;
+
+        if (races >= 100) {
+            rankBadge.textContent = "★★★★★ (PRO RACER)";
+        } else if (races >= 20) {
+            rankBadge.textContent = "★★★☆☆ (EXPERIENCED)";
+        } else {
+            rankBadge.textContent = "★☆☆☆☆ (ROOKIE)";
+        }
+
+        document.getElementById('myRankName').textContent = `📍 ${profile.username} (Tú)`;
+        document.getElementById('myRankStats').textContent = `${wins} / ${races} (${rate}%)`;
+    }
+
+    btnJoinRace.addEventListener('click', async () => {
+        const room = roomInput.value.trim().toUpperCase() || 'CAMPUS-ECI';
+        const pilot = pilotNameDisplay.textContent.trim();
+
+        try {
+            await fetch(`/api/rooms/${encodeURIComponent(room)}/join`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ runnerId: pilot })
+            });
+        } catch (e) {
+            console.warn("Fallo registro en sala, continuando a pista:", e);
+        }
+
+        window.location.href = `runner.html?player=${encodeURIComponent(pilot)}&room=${encodeURIComponent(room)}`;
+    });
+
+    btnGoDashboard.addEventListener('click', () => {
+        const room = roomInput.value.trim().toUpperCase() || 'CAMPUS-ECI';
+        window.location.href = `dashboard.html?room=${encodeURIComponent(room)}`;
+    });
+
+    btnLogout.addEventListener('click', () => {
+        if (confirm("¿Deseas cerrar la sesión de piloto?")) {
+            localStorage.removeItem('ecirace_username');
+            window.location.href = "index.html";
+        }
+    });
+
+    const btnChangeNick = document.getElementById('btnChangeNick');
+    const changeTagModal = document.getElementById('changeTagModal');
+    const newTagInput = document.getElementById('newTagInput');
+    const btnSaveTag = document.getElementById('btnSaveTag');
+    const btnCancelTag = document.getElementById('btnCancelTag');
+    const btnCloseTagModal = document.getElementById('btnCloseTagModal');
+
+    btnChangeNick.addEventListener('click', () => {
+        newTagInput.value = pilotNameDisplay.textContent.trim();
+        changeTagModal.style.display = "flex";
+    });
+
+    btnSaveTag.addEventListener('click', async () => {
+        const currentName = pilotNameDisplay.textContent.trim();
+        const nextName = newTagInput.value.trim();
+        if (!nextName) return;
+
+        try {
+            const res = await fetch('/api/auth/username', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ currentUsername: currentName, newUsername: nextName })
+            });
+            if (res.ok) {
+                const updated = await res.json();
+                localStorage.setItem('ecirace_username', updated.username);
+                renderizarPerfil(updated);
+            } else {
+                localStorage.setItem('ecirace_username', nextName);
+                await cargarPerfil(nextName);
+            }
+        } catch (e) {
+            localStorage.setItem('ecirace_username', nextName);
+            await cargarPerfil(nextName);
+        }
+
+        changeTagModal.style.display = "none";
+    });
+
+    btnCancelTag.addEventListener('click', () => { changeTagModal.style.display = "none"; });
+    btnCloseTagModal.addEventListener('click', () => { changeTagModal.style.display = "none"; });
+
+    const btnLeaderboard = document.getElementById('btnLeaderboard');
+    const leaderboardModal = document.getElementById('leaderboardModal');
+    const btnCloseLeaderboard = document.getElementById('btnCloseLeaderboard');
+    const btnDoneLeaderboard = document.getElementById('btnDoneLeaderboard');
+    btnLeaderboard.addEventListener('click', () => { leaderboardModal.style.display = "flex"; });
+    btnCloseLeaderboard.addEventListener('click', () => { leaderboardModal.style.display = "none"; });
+    btnDoneLeaderboard.addEventListener('click', () => { leaderboardModal.style.display = "none"; });
+
+    const btnSettings = document.getElementById('btnSettings');
+    const settingsModal = document.getElementById('settingsModal');
+    const btnCloseSettings = document.getElementById('btnCloseSettings');
+    const btnSaveSettings = document.getElementById('btnSaveSettings');
+    btnSettings.addEventListener('click', () => { settingsModal.style.display = "flex"; });
+    btnCloseSettings.addEventListener('click', () => { settingsModal.style.display = "none"; });
+    btnSaveSettings.addEventListener('click', () => {
+        alert("Preferencias guardadas correctamente.");
+        settingsModal.style.display = "none";
+    });
+
+    cargarPerfil(activePilot);
+    cargarSalasActivas();
+    setInterval(cargarSalasActivas, 5000);
+</script>
+</body>
+</html>

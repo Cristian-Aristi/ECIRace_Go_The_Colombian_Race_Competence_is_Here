@@ -11,14 +11,19 @@
 <body>
 <header>
     <div class="brand">
-        <span>🏁 ECIRace GO</span>
+        <a href="lobby.html" style="text-decoration: none; color: inherit; display: flex; align-items: center; gap: 0.5rem;" title="Volver al Lobby">
+            <span>🏁 ECIRace GO</span>
+        </a>
         <span style="font-size: 0.85rem; color: var(--text-muted); font-weight: normal;">| CLIENT_PLAYER</span>
     </div>
-    <div class="hud-badge" id="hudStatus">STANDBY</div>
+    <div style="display: flex; gap: 0.5rem; align-items: center;">
+        <a href="lobby.html" class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; text-decoration: none; display: inline-block;">🏠 LOBBY</a>
+        <div class="hud-badge" id="hudStatus">STANDBY</div>
+    </div>
 </header>
 
 <main class="main-container">
-    <!-- Tarjeta de Identificación -->
+
     <section class="card">
         <div class="card-header">
             <span class="card-title">Identificación del Corredor</span>
@@ -26,6 +31,10 @@
         </div>
         <div style="font-family: monospace; font-size: 1.1rem; color: var(--color-amber);">
             ID: <strong id="runnerIdDisplay">Cargando...</strong>
+        </div>
+        <div class="telemetry-row">
+            <span class="telemetry-label">Sala de Carrera:</span>
+            <span class="telemetry-value" id="roomDisplay" style="color: var(--color-teal); font-weight: bold;">--</span>
         </div>
         <div class="telemetry-row">
             <span class="telemetry-label">Canal WebSocket:</span>
@@ -37,7 +46,6 @@
         </div>
     </section>
 
-    <!-- Tacómetro de Velocidad y Telemetría -->
     <section class="card">
         <div class="gauge-container">
             <div class="speedometer-circle">
@@ -66,7 +74,6 @@
         </div>
     </section>
 
-    <!-- Controles -->
     <section class="card">
         <div class="grid-2">
             <button type="button" id="btnStartGps" class="btn btn-primary">📡 Iniciar GPS Real</button>
@@ -77,7 +84,6 @@
         </div>
     </section>
 
-    <!-- Registro de Eventos -->
     <section class="card">
         <div class="card-header">
             <span class="card-title">Registro de Sensor</span>
@@ -89,8 +95,15 @@
 </main>
 
 <script>
-    const runnerId = "Jugador_" + Math.floor(100 + Math.random() * 900);
+    const urlParams = new URLSearchParams(window.location.search);
+    const runnerId = urlParams.get('player') || localStorage.getItem('ecirace_username');
+    if (!runnerId || runnerId.trim() === '') {
+        alert("Acceso denegado: Debes iniciar sesión en el Lobby antes de ingresar a la pista.");
+        window.location.href = "index.html";
+    }
+    const roomCode = (urlParams.get('room') || 'CAMPUS-ECI').toUpperCase();
     document.getElementById('runnerIdDisplay').innerText = runnerId;
+    document.getElementById('roomDisplay').innerText = roomCode;
 
     const hudStatus = document.getElementById('hudStatus');
     const sourceBadge = document.getElementById('sourceBadge');
@@ -114,7 +127,6 @@
     const wsStatusDisplay = document.getElementById('wsStatusDisplay');
     const packetsCountDisplay = document.getElementById('packetsCountDisplay');
 
-    // Trayecto Campus Escuela Colombiana de Ingeniería Julio Garavito
     const mockWaypoints = [
         { lat: 4.782800, lng: -74.043000 },
         { lat: 4.783100, lng: -74.043200 },
@@ -145,7 +157,7 @@
                 wsStatusDisplay.innerText = "CONECTADO (En Vivo)";
                 wsStatusDisplay.style.color = "var(--color-teal)";
             }
-            log("Conexión WebSocket establecida.", "info");
+            log(`Conexión WebSocket establecida para sala ${roomCode}.`, "info");
         }, function (error) {
             isWsConnected = false;
             if (wsStatusDisplay) {
@@ -167,12 +179,13 @@
                     latitude: currentPosition.lat,
                     longitud: currentPosition.lng,
                     longitude: currentPosition.lng,
+                    roomCode: roomCode,
                     timestamp: Date.now()
                 };
                 stompClient.send("/app/telemetry", {}, JSON.stringify(payload));
                 packetsSent++;
                 if (packetsCountDisplay) packetsCountDisplay.innerText = packetsSent;
-                log(`📤 Enviado a /app/telemetry: Lat ${payload.latitude.toFixed(5)}, Lng ${payload.longitude.toFixed(5)}`, 'info');
+                log(`📤 Telemetría enviada a sala [${roomCode}]: Lat ${payload.latitude.toFixed(5)}, Lng ${payload.longitude.toFixed(5)}`, 'info');
             }
         }, 1500);
     }
@@ -183,7 +196,7 @@
             networkInterval = null;
         }
     }
-    // Iniciar la conexión de una vez
+
     conectarWebSocket();
 
     function updateUI(lat, lng, acc, speed, source) {
@@ -202,7 +215,6 @@
         log(`Captura ${source}: Lat ${lat.toFixed(5)}, Lng ${lng.toFixed(5)} (${speed} km/h)`);
     }
 
-    // GPS Hardware
     btnStartGps.addEventListener('click', () => {
         if (!("geolocation" in navigator)) {
             alert("Geolocalización no soportada en este navegador.");
@@ -224,7 +236,6 @@
         });
 
         iniciarTransmisionContinua();
-
     });
 
     btnStopGps.addEventListener('click', () => {
@@ -247,7 +258,6 @@
         log("Rastreo detenido.", "warn");
     });
 
-    // Simulador
     btnToggleSim.addEventListener('click', () => {
         if (simInterval !== null) {
             clearInterval(simInterval);
@@ -274,7 +284,6 @@
             }, 1500);
 
             iniciarTransmisionContinua();
-
         }
     });
 </script>

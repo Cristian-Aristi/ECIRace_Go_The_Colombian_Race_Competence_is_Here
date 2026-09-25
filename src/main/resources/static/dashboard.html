@@ -3,130 +3,296 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECIRace - Dashboard Central</title>
+    <title>ECIRace GO - Tablero Central de Sala</title>
 
-    <!-- Librerías de Mapas (Leaflet) -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-    <!-- Librerías de conexión WebSocket -->
     <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <link rel="stylesheet" href="css/styles.css">
 
     <style>
-        body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
-        #map { height: 100vh; width: 100vw; }
-        #overlay {
+        body {
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            overflow: hidden;
+            background-color: var(--bg-asphalt);
+        }
+        #map {
+            height: 100vh;
+            width: 100vw;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+        .dashboard-overlay {
             position: absolute;
             top: 20px;
-            left: 50px;
+            left: 20px;
             z-index: 1000;
-            background-color: rgba(30, 30, 30, 0.9);
-            color: white;
-            padding: 15px 25px;
-            border-radius: 8px;
-            border: 2px solid #fbc02d;
-            box-shadow: 0px 4px 6px rgba(0,0,0,0.3);
+            background-color: rgba(28, 32, 36, 0.94);
+            backdrop-filter: blur(8px);
+            color: var(--text-paper);
+            padding: 1.25rem 1.5rem;
+            border-radius: 0.75rem;
+            border: 2px solid var(--color-amber);
+            box-shadow: 0 8px 30px rgba(0,0,0,0.7);
+            max-width: 360px;
+            width: 90vw;
         }
-        h2 { margin: 0 0 10px 0; color: #fbc02d; }
-        #status { font-weight: bold; color: #ff5722; }
+        .overlay-title {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--color-amber);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 0.75rem;
+        }
+        .room-badge-large {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            background-color: var(--bg-panel2);
+            border: 1px solid var(--color-teal);
+            color: var(--color-teal);
+            padding: 0.35rem 0.75rem;
+            border-radius: 0.5rem;
+            font-family: monospace;
+            font-size: 1.05rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.75rem;
+            width: 100%;
+            justify-content: space-between;
+        }
+        .runners-list-box {
+            max-height: 140px;
+            overflow-y: auto;
+            background-color: var(--bg-asphalt);
+            border: 1px solid var(--border-line);
+            border-radius: 0.4rem;
+            padding: 0.4rem 0.6rem;
+            margin-top: 0.6rem;
+            font-family: monospace;
+            font-size: 0.8rem;
+        }
+        .runner-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.3rem 0;
+            border-bottom: 1px dashed var(--border-line);
+        }
+        .runner-item:last-child { border-bottom: none; }
     </style>
 </head>
 <body>
 
-<div id="overlay">
-    <h2>ECIRace Dashboard</h2>
-    <p>Estado de Red: <span id="status">Desconectado</span></p>
-    <p>Corredores Activos: <span id="activeCount">0</span></p>
+<div class="dashboard-overlay">
+    <div class="overlay-title">
+        <span>🏁 ECIRace Central</span>
+        <span class="hud-badge" id="hostStatusBadge" style="font-size: 0.7rem;">CONECTANDO</span>
+    </div>
+
+    <div class="room-badge-large">
+        <span>SALA: <span id="roomCodeDisplay">CAMPUS-ECI</span></span>
+        <button type="button" class="btn btn-secondary" id="btnCopyRoom" style="width: auto; padding: 0.2rem 0.5rem; font-size: 0.75rem;" title="Copiar Código de Sala">
+            📋 Copiar
+        </button>
+    </div>
+
+    <div class="telemetry-row">
+        <span class="telemetry-label">Estado de Red:</span>
+        <span class="telemetry-value" id="status" style="color: var(--color-alert); font-weight: bold;">Desconectado</span>
+    </div>
+    <div class="telemetry-row">
+        <span class="telemetry-label">Pilotos en Sala:</span>
+        <span class="telemetry-value" id="activeCount" style="color: var(--color-teal); font-weight: bold;">0</span>
+    </div>
+
+    <div class="runners-list-box" id="runnersList">
+        <div style="color: var(--text-muted); text-align: center; padding: 0.5rem 0;">
+            Esperando corredores en la sala...
+        </div>
+    </div>
+
+    <div style="display: flex; gap: 0.5rem; margin-top: 0.85rem;">
+        <a href="index.html" class="btn btn-secondary" style="font-size: 0.75rem; padding: 0.4rem; text-decoration: none;">
+            ◀ Portal
+        </a>
+        <a href="lobby.html" class="btn btn-secondary" style="font-size: 0.75rem; padding: 0.4rem; text-decoration: none;">
+            🏠 Lobby
+        </a>
+        <button type="button" class="btn btn-primary" id="btnShareLink" style="font-size: 0.75rem; padding: 0.4rem;">
+            🔗 Enlace Piloto
+        </button>
+    </div>
 </div>
 
 <div id="map"></div>
 
 <script>
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomCode = (urlParams.get('room') || 'CAMPUS-ECI').toUpperCase();
+    document.getElementById('roomCodeDisplay').innerText = roomCode;
 
-    const map = L.map('map').setView([4.7297, -74.0433], 15);
+    const campusCenter = [4.782800, -74.043000];
+    const map = L.map('map').setView(campusCenter, 16);
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
-        attribution: '© OpenStreetMap'
+        attribution: '© OpenStreetMap - ECIRace GO'
     }).addTo(map);
 
-
     if ("geolocation" in navigator) {
-        navigator.geolocation.getCurrentPosition(function(position) {
-            const hostLat = position.coords.latitude;
-            const hostLon = position.coords.longitude;
-
-
-            map.flyTo([hostLat, hostLon], 16);
-
-
-            L.circleMarker([hostLat, hostLon], {
-                color: '#f44336',
-                fillColor: '#f44336',
-                fillOpacity: 0.8,
-                radius: 8
-            }).addTo(map).bindPopup("<b>Puesto de Control (Tú)</b>").openPopup();
-
-        }, function(error) {
-            console.warn("No se pudo obtener la ubicación del host. Se usará la vista por defecto.");
+        navigator.geolocation.getCurrentPosition(function(pos) {
+            const hLat = pos.coords.latitude;
+            const hLon = pos.coords.longitude;
+            L.circleMarker([hLat, hLon], {
+                color: '#e8a33d',
+                fillColor: '#e8a33d',
+                fillOpacity: 0.85,
+                radius: 9
+            }).addTo(map).bindPopup(`<b>🏁 Central de Control (${roomCode})</b>`).openPopup();
+        }, function() {
+            L.circleMarker(campusCenter, {
+                color: '#e8a33d',
+                fillColor: '#e8a33d',
+                fillOpacity: 0.85,
+                radius: 9
+            }).addTo(map).bindPopup(`<b>🏁 Central Campus ECI (${roomCode})</b>`);
         });
     }
-
 
     const corredores = {};
     let stompClient = null;
 
+    const statusDisplay = document.getElementById('status');
+    const hostStatusBadge = document.getElementById('hostStatusBadge');
+    const activeCountDisplay = document.getElementById('activeCount');
+    const runnersList = document.getElementById('runnersList');
 
     function conectarWebSocket() {
         const socket = new SockJS('/race-ws');
         stompClient = Stomp.over(socket);
-
-
         stompClient.debug = null;
 
-        stompClient.connect({}, function (frame) {
-            document.getElementById('status').innerText = "En Vivo (Conectado)";
-            document.getElementById('status').style.color = "#4CAF50";
+        stompClient.connect({}, function () {
+            statusDisplay.innerText = "En Vivo (Conectado)";
+            statusDisplay.style.color = "var(--color-teal)";
+            hostStatusBadge.innerText = "ONLINE";
+            hostStatusBadge.style.color = "var(--color-teal)";
+            hostStatusBadge.style.borderColor = "var(--color-teal)";
 
+            stompClient.subscribe('/topic/rooms/' + roomCode, function (mensaje) {
+                const ubication = JSON.parse(mensaje.body);
+                actualizarMapaYLista(ubication);
+            });
 
             stompClient.subscribe('/topic/broadcast', function (mensaje) {
-                const ubicacion = JSON.parse(mensaje.body);
-                actualizarMapa(ubicacion);
+                const ubication = JSON.parse(mensaje.body);
+                const msgRoom = (ubication.roomCode || 'CAMPUS-ECI').toUpperCase();
+                if (msgRoom === roomCode) {
+                    actualizarMapaYLista(ubication);
+                }
             });
-        }, function(error) {
-            document.getElementById('status').innerText = "Desconectado. Reintentando...";
-            document.getElementById('status').style.color = "#ff5722";
+
+        }, function () {
+            statusDisplay.innerText = "Desconectado. Reintentando...";
+            statusDisplay.style.color = "var(--color-alert)";
+            hostStatusBadge.innerText = "OFFLINE";
+            hostStatusBadge.style.color = "var(--color-alert)";
+            hostStatusBadge.style.borderColor = "var(--color-alert)";
             setTimeout(conectarWebSocket, 5000);
         });
     }
 
+    function actualizarMapaYLista(ubication) {
+        const id = ubication.runnerId;
+        const lat = ubication.latitude;
+        const lon = ubication.longitude;
+        const speed = (ubication.speed !== undefined) ? ubication.speed : 0.0;
+        const isSuspicious = ubication.suspicious === true;
 
-    function actualizarMapa(ubicacion) {
+        if (lat === undefined || lon === undefined || !id) return;
 
-        console.log("Recibido de Java:", ubicacion);
+        if (corredores[id]) {
+            corredores[id].marker.setLatLng([lat, lon]);
+            corredores[id].speed = speed;
+            corredores[id].suspicious = isSuspicious;
+            corredores[id].lastUpdate = Date.now();
+        } else {
+            const markerColor = isSuspicious ? '#d6584b' : '#3fa796';
+            const nuevoMarcador = L.circleMarker([lat, lon], {
+                color: markerColor,
+                fillColor: markerColor,
+                fillOpacity: 0.9,
+                radius: 8
+            }).addTo(map);
 
+            corredores[id] = {
+                marker: nuevoMarcador,
+                speed: speed,
+                suspicious: isSuspicious,
+                lastUpdate: Date.now()
+            };
+        }
 
-        const id = ubicacion.runnerId;
-        const lat = ubicacion.latitude;
-        const lon = ubicacion.longitude;
+        const alertTag = isSuspicious ? " <span style='color:red;'>🚨 [ANOMALÍA]</span>" : "";
+        corredores[id].marker.bindPopup(`
+            <div style="font-family: monospace;">
+                <strong>🏎️ ${id}</strong>${alertTag}<br>
+                Velocidad: ${speed.toFixed(1)} km/h<br>
+                Sala: ${roomCode}
+            </div>
+        `);
 
-        if (lat === undefined || lon === undefined) {
-            console.error("Error: Coordenadas indefinidas. Verifica el JSON en consola.");
+        renderizarListaCorredores();
+    }
+
+    function renderizarListaCorredores() {
+        const keys = Object.keys(corredores);
+        activeCountDisplay.innerText = keys.length;
+
+        if (keys.length === 0) {
+            runnersList.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 0.5rem 0;">Esperando corredores en la sala...</div>';
             return;
         }
 
-        if (corredores[id]) {
-            corredores[id].setLatLng([lat, lon]);
-        } else {
-            const nuevoMarcador = L.marker([lat, lon]).addTo(map);
-            nuevoMarcador.bindPopup(`<b>${id}</b>`).openPopup();
-
-            corredores[id] = nuevoMarcador;
-            document.getElementById('activeCount').innerText = Object.keys(corredores).length;
-        }
+        runnersList.innerHTML = '';
+        keys.forEach(id => {
+            const data = corredores[id];
+            const item = document.createElement('div');
+            item.className = 'runner-item';
+            const alertColor = data.suspicious ? 'var(--color-alert)' : 'var(--color-teal)';
+            const alertIcon = data.suspicious ? '🚨' : '🏎️';
+            item.innerHTML = `
+                <span>${alertIcon} ${id}</span>
+                <span style="color: ${alertColor};">${data.speed.toFixed(1)} km/h</span>
+            `;
+            runnersList.appendChild(item);
+        });
     }
 
+    document.getElementById('btnCopyRoom').addEventListener('click', () => {
+        navigator.clipboard.writeText(roomCode).then(() => {
+            alert(`Código de sala copiado: ${roomCode}`);
+        }).catch(() => {
+            prompt("Copia el código de sala:", roomCode);
+        });
+    });
+
+    document.getElementById('btnShareLink').addEventListener('click', () => {
+        const shareUrl = `${window.location.origin}/lobby.html?room=${encodeURIComponent(roomCode)}`;
+        navigator.clipboard.writeText(shareUrl).then(() => {
+            alert(`🔗 Enlace para pilotos copiado:\n${shareUrl}`);
+        }).catch(() => {
+            prompt("Copia el enlace para compartir a los pilotos:", shareUrl);
+        });
+    });
 
     conectarWebSocket();
 </script>

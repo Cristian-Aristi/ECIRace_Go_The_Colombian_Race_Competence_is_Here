@@ -158,7 +158,16 @@ header {
   gap: 1rem;
 }
 
-@media (max-width: 600px) { .grid-2 { grid-template-columns: 1fr; } }
+.grid-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.75rem;
+}
+
+@media (max-width: 600px) { 
+  .grid-2 { grid-template-columns: 1fr; }
+  .grid-3 { grid-template-columns: 1fr; }
+}
 
 .log-box {
   height: 120px;
@@ -175,3 +184,80 @@ header {
 .log-entry.info { color: var(--color-teal); }
 .log-entry.warn { color: var(--color-amber); }
 .log-entry.error { color: var(--color-alert); }
+
+/* --- Componentes de Lobby y Perfil de Piloto --- */
+.input-text {
+  width: 100%;
+  background-color: var(--bg-panel2);
+  border: 1px solid var(--border-line);
+  color: var(--text-paper);
+  font-family: monospace;
+  font-size: 1.1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  letter-spacing: 0.05em;
+}
+
+.input-text:focus {
+  border-color: var(--color-amber);
+  box-shadow: 0 0 0 2px rgba(232, 163, 61, 0.25);
+}
+
+.input-text::placeholder {
+  color: var(--text-muted);
+}
+
+.pilot-avatar-container {
+  width: 76px;
+  height: 76px;
+  min-width: 76px;
+  min-height: 76px;
+  max-width: 76px;
+  max-height: 76px;
+  border-radius: 12px;
+  background-color: var(--bg-panel2);
+  border: 2px solid var(--color-amber);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  box-shadow: 0 0 12px rgba(232, 163, 61, 0.2);
+}
+
+.pilot-avatar-svg {
+  width: 58px;
+  height: 58px;
+  max-width: 58px;
+  max-height: 58px;
+  display: block;
+}
+
+.modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(10, 12, 14, 0.85);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+  padding: 1rem;
+}
+
+.modal-content {
+  background-color: var(--bg-panel);
+  border: 1px solid var(--color-amber);
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  max-width: 460px;
+  width: 100%;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
