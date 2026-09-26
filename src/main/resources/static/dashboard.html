@@ -42,6 +42,8 @@
             box-shadow: 0 8px 30px rgba(0,0,0,0.7);
             max-width: 360px;
             width: 90vw;
+            max-height: 92vh;
+            overflow-y: auto;
         }
         .overlay-title {
             font-size: 1.2rem;
@@ -70,7 +72,7 @@
             justify-content: space-between;
         }
         .runners-list-box {
-            max-height: 140px;
+            max-height: 120px;
             overflow-y: auto;
             background-color: var(--bg-asphalt);
             border: 1px solid var(--border-line);
@@ -97,6 +99,17 @@
         #btnStartRaceDashboard:disabled {
             opacity: 0.5;
             cursor: not-allowed;
+        }
+
+        /* La consola reutiliza .log-box / .log-entry de styles.css (mismas
+           clases que ya usa runner.html en "Registro de Sensor"), así que
+           no se define aquí ningún estilo nuevo para las líneas de evento. */
+        .console-section-title {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-paper);
+            margin-top: 1rem;
+            margin-bottom: 0.4rem;
         }
     </style>
 </head>
@@ -134,12 +147,14 @@
         </div>
     </div>
 
-    <!-- ===================== NUEVO: control de inicio directamente desde el dashboard ===================== -->
     <button type="button" class="btn btn-primary" id="btnStartRaceDashboard" style="display:none;">
         🚀 Iniciar Carrera
     </button>
-    <div id="raceAlreadyStartedMsg" style="display:none; text-align:center; padding: 0.5rem 0; color: var(--color-teal); font-size: 0.8rem; font-family: monospace;">
-        🏁 Carrera en curso
+
+    <!-- ===================== Consola de Sockets (misma estructura que "Registro de Sensor" de runner.html) ===================== -->
+    <div class="console-section-title">🖥️ Consola de Sockets</div>
+    <div class="log-box" id="eventLog">
+        <div class="log-entry info">[SISTEMA] Esperando actividad en la sala...</div>
     </div>
 
     <div style="display: flex; gap: 0.5rem; margin-top: 0.85rem;">
@@ -150,7 +165,7 @@
             🏠 Lobby
         </a>
         <button type="button" class="btn btn-primary" id="btnShareLink" style="font-size: 0.75rem; padding: 0.4rem;">
-            🔗 Enlace Piloto
+            🔗 Enlace
         </button>
     </div>
 </div>
@@ -175,23 +190,19 @@
             const hLat = pos.coords.latitude;
             const hLon = pos.coords.longitude;
             L.circleMarker([hLat, hLon], {
-                color: '#e8a33d',
-                fillColor: '#e8a33d',
-                fillOpacity: 0.85,
-                radius: 9
+                color: '#e8a33d', fillColor: '#e8a33d', fillOpacity: 0.85, radius: 9
             }).addTo(map).bindPopup(`<b>🏁 Central de Control (${roomCode})</b>`).openPopup();
         }, function() {
             L.circleMarker(campusCenter, {
-                color: '#e8a33d',
-                fillColor: '#e8a33d',
-                fillOpacity: 0.85,
-                radius: 9
+                color: '#e8a33d', fillColor: '#e8a33d', fillOpacity: 0.85, radius: 9
             }).addTo(map).bindPopup(`<b>🏁 Central Campus ECI (${roomCode})</b>`);
         });
     }
 
     const corredores = {};
     let stompClient = null;
+    let hostNameDeLaSala = null;
+    let ultimoRosterConocido = [];
 
     const statusDisplay = document.getElementById('status');
     const hostStatusBadge = document.getElementById('hostStatusBadge');
@@ -199,12 +210,16 @@
     const runnersList = document.getElementById('runnersList');
     const raceStatusValue = document.getElementById('raceStatusValue');
     const btnStartRaceDashboard = document.getElementById('btnStartRaceDashboard');
-    const raceAlreadyStartedMsg = document.getElementById('raceAlreadyStartedMsg');
+    const eventLog = document.getElementById('eventLog');
 
-    // El dashboard fue quien creó la sala (flujo index.html -> dashboard.html),
-    // así que confiamos en el hostName que el propio servidor guardó para esta
-    // sala (no dependemos de localStorage, porque esta pantalla no pasa por login).
-    let hostNameDeLaSala = null;
+    // ---------- Consola de sockets: MISMA función/estructura que usa runner.html ----------
+    function log(msg, type = 'info') {
+        const entry = document.createElement('div');
+        entry.className = `log-entry ${type}`;
+        entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        eventLog.appendChild(entry);
+        eventLog.scrollTop = eventLog.scrollHeight;
+    }
 
     function conectarWebSocket() {
         const socket = new SockJS('/race-ws');
@@ -217,18 +232,19 @@
             hostStatusBadge.innerText = "ONLINE";
             hostStatusBadge.style.color = "var(--color-teal)";
             hostStatusBadge.style.borderColor = "var(--color-teal)";
+            log(`Socket conectado al canal de la sala ${roomCode}.`, 'info');
 
             stompClient.subscribe('/topic/rooms/' + roomCode, function (mensaje) {
                 const ubication = JSON.parse(mensaje.body);
                 actualizarMapaYLista(ubication);
+                const tipo = ubication.suspicious ? 'error' : 'info';
+                log(`📍 ${ubication.runnerId} @ (${ubication.latitude.toFixed(5)}, ${ubication.longitude.toFixed(5)}) — ${(ubication.speed || 0).toFixed(1)} km/h${ubication.suspicious ? ' [ANOMALÍA]' : ''}`, tipo);
             });
 
             stompClient.subscribe('/topic/broadcast', function (mensaje) {
                 const ubication = JSON.parse(mensaje.body);
                 const msgRoom = (ubication.roomCode || 'CAMPUS-ECI').toUpperCase();
-                if (msgRoom === roomCode) {
-                    actualizarMapaYLista(ubication);
-                }
+                if (msgRoom === roomCode) actualizarMapaYLista(ubication);
             });
 
             stompClient.subscribe('/topic/rooms/' + roomCode + '/status', function (mensaje) {
@@ -242,6 +258,7 @@
             hostStatusBadge.innerText = "OFFLINE";
             hostStatusBadge.style.color = "var(--color-alert)";
             hostStatusBadge.style.borderColor = "var(--color-alert)";
+            log('Socket desconectado, reintentando en 5s...', 'warn');
             setTimeout(conectarWebSocket, 5000);
         });
     }
@@ -259,22 +276,12 @@
             corredores[id].marker.setLatLng([lat, lon]);
             corredores[id].speed = speed;
             corredores[id].suspicious = isSuspicious;
-            corredores[id].lastUpdate = Date.now();
         } else {
             const markerColor = isSuspicious ? '#d6584b' : '#3fa796';
             const nuevoMarcador = L.circleMarker([lat, lon], {
-                color: markerColor,
-                fillColor: markerColor,
-                fillOpacity: 0.9,
-                radius: 8
+                color: markerColor, fillColor: markerColor, fillOpacity: 0.9, radius: 8
             }).addTo(map);
-
-            corredores[id] = {
-                marker: nuevoMarcador,
-                speed: speed,
-                suspicious: isSuspicious,
-                lastUpdate: Date.now()
-            };
+            corredores[id] = { marker: nuevoMarcador, speed: speed, suspicious: isSuspicious };
         }
 
         const alertTag = isSuspicious ? " <span style='color:red;'>🚨 [ANOMALÍA]</span>" : "";
@@ -289,9 +296,6 @@
         renderizarListaCorredores();
     }
 
-    // ---------- Roster de la sala + control de arranque ----------
-    let ultimoRosterConocido = [];
-
     async function refrescarRosterDeSala() {
         try {
             const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}`);
@@ -304,21 +308,24 @@
     }
 
     function aplicarEstadoDeSala(room) {
+        const rosterAnterior = new Set(ultimoRosterConocido);
         hostNameDeLaSala = room.hostName;
 
         raceStatusValue.textContent = room.status;
         raceStatusValue.style.color = room.status === 'IN_PROGRESS' ? 'var(--color-teal)' : 'var(--color-amber)';
 
         ultimoRosterConocido = room.activeRunners || [];
-        renderizarListaCorredores();
 
-        if (room.status === 'WAITING') {
-            btnStartRaceDashboard.style.display = 'block';
-            raceAlreadyStartedMsg.style.display = 'none';
-        } else {
-            btnStartRaceDashboard.style.display = 'none';
-            raceAlreadyStartedMsg.style.display = 'block';
-        }
+        // Esto es "ver los sockets" en la misma consola: cada jugador nuevo
+        // que entra queda registrado como una línea, igual que en terminal.
+        ultimoRosterConocido.forEach(name => {
+            if (!rosterAnterior.has(name)) {
+                log(`🟢 ${name} se unió a la sala (${ultimoRosterConocido.length}/6).`, 'info');
+            }
+        });
+
+        renderizarListaCorredores();
+        btnStartRaceDashboard.style.display = (room.status === 'WAITING') ? 'block' : 'none';
     }
 
     btnStartRaceDashboard.addEventListener('click', async () => {
@@ -335,14 +342,14 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ hostName: hostNameDeLaSala })
             });
-            if (!res.ok) {
+            if (res.ok) {
+                log('🏁 Carrera iniciada por el host.', 'info');
+            } else {
                 const err = await res.json().catch(() => ({ error: 'No se pudo iniciar la carrera.' }));
                 alert(err.error || 'No se pudo iniciar la carrera.');
                 btnStartRaceDashboard.disabled = false;
                 btnStartRaceDashboard.textContent = "🚀 Iniciar Carrera";
             }
-            // Si fue exitoso, el propio socket de /topic/rooms/{code}/status
-            // actualiza la UI (oculta el botón, muestra "Carrera en curso").
         } catch (e) {
             alert('Error de red al iniciar la carrera.');
             btnStartRaceDashboard.disabled = false;
@@ -367,29 +374,20 @@
             const alertColor = (transmitiendo && corredores[id].suspicious) ? 'var(--color-alert)' : (transmitiendo ? 'var(--color-teal)' : 'var(--text-muted)');
             const alertIcon = transmitiendo ? (corredores[id].suspicious ? '🚨' : '🏎️') : '🟡';
             const valueText = transmitiendo ? `${corredores[id].speed.toFixed(1)} km/h` : 'En sala';
-            item.innerHTML = `
-                <span>${alertIcon} ${id}</span>
-                <span style="color: ${alertColor};">${valueText}</span>
-            `;
+            item.innerHTML = `<span>${alertIcon} ${id}</span><span style="color: ${alertColor};">${valueText}</span>`;
             runnersList.appendChild(item);
         });
     }
 
     document.getElementById('btnCopyRoom').addEventListener('click', () => {
-        navigator.clipboard.writeText(roomCode).then(() => {
-            alert(`Código de sala copiado: ${roomCode}`);
-        }).catch(() => {
-            prompt("Copia el código de sala:", roomCode);
-        });
+        navigator.clipboard.writeText(roomCode).then(() => alert(`Código de sala copiado: ${roomCode}`))
+            .catch(() => prompt("Copia el código de sala:", roomCode));
     });
 
     document.getElementById('btnShareLink').addEventListener('click', () => {
         const shareUrl = `${window.location.origin}/lobby.html?room=${encodeURIComponent(roomCode)}`;
-        navigator.clipboard.writeText(shareUrl).then(() => {
-            alert(`🔗 Enlace para pilotos copiado:\n${shareUrl}`);
-        }).catch(() => {
-            prompt("Copia el enlace para compartir a los pilotos:", shareUrl);
-        });
+        navigator.clipboard.writeText(shareUrl).then(() => alert(`🔗 Enlace copiado:\n${shareUrl}`))
+            .catch(() => prompt("Copia el enlace para compartir a los pilotos:", shareUrl));
     });
 
     conectarWebSocket();
