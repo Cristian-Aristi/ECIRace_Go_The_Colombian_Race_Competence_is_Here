@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ECIRace GO - Lobby de Competición</title>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
     <link rel="stylesheet" href="css/styles.css">
     <style>
         .room-pill {
@@ -24,6 +26,74 @@
             border-color: var(--color-amber);
             background-color: rgba(232, 163, 61, 0.15);
             color: var(--color-amber);
+        }
+        .room-pill.full {
+            opacity: 0.4;
+            cursor: not-allowed;
+            border-color: var(--color-alert);
+        }
+        .room-pill.started {
+            opacity: 0.4;
+            cursor: not-allowed;
+            border-style: dashed;
+        }
+        .roster-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            background-color: var(--bg-panel2);
+            border: 1px solid var(--border-line);
+            border-radius: 0.5rem;
+            font-family: monospace;
+            font-size: 0.85rem;
+        }
+        .roster-item.is-host {
+            border-color: var(--color-amber);
+            color: var(--color-amber);
+        }
+        .roster-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 0.5rem;
+            margin: 0.75rem 0 1rem 0;
+        }
+        .capacity-bar {
+            width: 100%;
+            height: 8px;
+            background-color: var(--bg-panel2);
+            border-radius: 999px;
+            overflow: hidden;
+            border: 1px solid var(--border-line);
+            margin-top: 0.35rem;
+        }
+        .capacity-bar-fill {
+            height: 100%;
+            background-color: var(--color-teal);
+            transition: width 0.3s ease;
+        }
+        .capacity-bar-fill.full {
+            background-color: var(--color-alert);
+        }
+        .waiting-pulse {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--color-amber);
+            margin-right: 0.4rem;
+            animation: pulse 1.4s infinite ease-in-out;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+        }
+        .tag-input-row {
+            display: flex;
+            gap: 0.5rem;
+        }
+        .tag-input-row .input-text {
+            flex: 1;
         }
     </style>
 </head>
@@ -102,6 +172,33 @@
         </div>
     </section>
 
+    <!-- ===================== CREAR SALA (código elegido por el usuario, NO random) ===================== -->
+    <section class="card" id="createRoomSection">
+        <div class="card-header">
+            <span class="card-title">Crear Nueva Sala</span>
+            <span class="hud-badge" style="color: var(--color-teal); border-color: var(--color-teal);">HOST</span>
+        </div>
+        <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+            Ponle el nombre que quieras a tu sala (máx. 16 caracteres). Serás el <strong>host</strong>: solo tú podrás iniciar la carrera. Cupo máximo: <strong>6 pilotos</strong>.
+        </p>
+        <div class="tag-input-row" style="margin-bottom: 0.75rem;">
+            <input
+                    type="text"
+                    id="createRoomInput"
+                    class="input-text"
+                    placeholder="Ej. CIRCUITO-NORTE o el nombre que quieras"
+                    maxlength="16"
+                    autocomplete="off"
+                    spellcheck="false"
+            />
+            <button type="button" id="btnCreateRoom" class="btn btn-primary" style="width: auto; padding: 0 1.1rem;">
+                🆕 Crear
+            </button>
+        </div>
+        <div id="createRoomError" style="display:none; font-size: 0.8rem; color: var(--color-alert); margin-top: -0.4rem; margin-bottom: 0.5rem;"></div>
+    </section>
+
+    <!-- ===================== UNIRSE A SALA EXISTENTE ===================== -->
     <section class="card">
         <div class="card-header">
             <span class="card-title">Unirse a Sala de Competición</span>
@@ -135,6 +232,41 @@
 
         <button type="button" id="btnJoinRace" class="btn btn-primary" style="font-size: 1.15rem; padding: 1rem; font-weight: 700;">
             🏎️ JOIN RACE ▶
+        </button>
+        <div id="joinRoomError" style="display:none; font-size: 0.8rem; color: var(--color-alert); margin-top: 0.5rem;"></div>
+    </section>
+
+    <!-- ===================== SALA DE ESPERA (roster + control del host) ===================== -->
+    <section class="card" id="waitingRoomSection" style="display:none;">
+        <div class="card-header">
+            <span class="card-title">Sala de Espera: <span id="currentRoomCodeLabel" style="color: var(--color-amber);">--</span></span>
+            <span class="hud-badge" id="raceStatusBadge">WAITING</span>
+        </div>
+
+        <div style="font-size: 0.8rem; color: var(--text-muted);">
+            Pilotos conectados: <strong id="rosterCountLabel">0 / 6</strong>
+        </div>
+        <div class="capacity-bar">
+            <div class="capacity-bar-fill" id="capacityBarFill" style="width: 0%;"></div>
+        </div>
+
+        <div class="roster-grid" id="rosterGrid"></div>
+
+        <div id="hostControls" style="display:none;">
+            <button type="button" id="btnStartRace" class="btn btn-primary" style="font-size: 1.1rem; padding: 0.95rem; font-weight: 700;">
+                🚀 INICIAR CARRERA
+            </button>
+            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem; text-align: center;">
+                Como host, tú decides cuándo empieza. Los demás pilotos no pueden iniciar la carrera.
+            </div>
+        </div>
+
+        <div id="guestWaitingMsg" style="display:none; text-align: center; padding: 0.75rem; color: var(--color-amber); font-family: monospace; font-size: 0.85rem;">
+            <span class="waiting-pulse"></span> Esperando a que el host inicie la carrera...
+        </div>
+
+        <button type="button" class="btn btn-secondary" id="btnLeaveWaitingRoom" style="margin-top: 0.75rem;">
+            ↩️ Salir de la sala
         </button>
     </section>
 
@@ -238,14 +370,18 @@
 </div>
 
 <script>
+    // ---------- Leer ?room= ANTES del guard, para no perderlo al redirigir a index.html ----------
+    const urlParams = new URLSearchParams(window.location.search);
+    const preselectedRoom = urlParams.get('room');
+
     const activePilot = localStorage.getItem('ecirace_username');
     if (!activePilot || activePilot.trim() === "") {
         alert("Acceso denegado: Debes iniciar sesión o ingresar tu nombre de piloto primero.");
-        window.location.href = "index.html";
+        const redirectTarget = preselectedRoom
+            ? `index.html?room=${encodeURIComponent(preselectedRoom)}`
+            : "index.html";
+        window.location.href = redirectTarget;
     }
-
-    const urlParams = new URLSearchParams(window.location.search);
-    const preselectedRoom = urlParams.get('room');
 
     const pilotNameDisplay = document.getElementById('pilotNameDisplay');
     const pilotEmailDisplay = document.getElementById('pilotEmailDisplay');
@@ -256,8 +392,33 @@
     const roomInput = document.getElementById('roomInput');
     const activeRoomsContainer = document.getElementById('activeRoomsContainer');
     const btnJoinRace = document.getElementById('btnJoinRace');
+    const joinRoomError = document.getElementById('joinRoomError');
     const btnGoDashboard = document.getElementById('btnGoDashboard');
     const btnLogout = document.getElementById('btnLogout');
+
+    const createRoomSection = document.getElementById('createRoomSection');
+    const createRoomInput = document.getElementById('createRoomInput');
+    const btnCreateRoom = document.getElementById('btnCreateRoom');
+    const createRoomError = document.getElementById('createRoomError');
+
+    const waitingRoomSection = document.getElementById('waitingRoomSection');
+    const currentRoomCodeLabel = document.getElementById('currentRoomCodeLabel');
+    const raceStatusBadge = document.getElementById('raceStatusBadge');
+    const rosterCountLabel = document.getElementById('rosterCountLabel');
+    const capacityBarFill = document.getElementById('capacityBarFill');
+    const rosterGrid = document.getElementById('rosterGrid');
+    const hostControls = document.getElementById('hostControls');
+    const guestWaitingMsg = document.getElementById('guestWaitingMsg');
+    const btnStartRace = document.getElementById('btnStartRace');
+    const btnLeaveWaitingRoom = document.getElementById('btnLeaveWaitingRoom');
+
+    const MAX_PLAYERS = 6;
+
+    // ---------- Estado de la sala de espera ----------
+    let activeRoomCode = null;
+    let roomPollInterval = null;
+    let stompClient = null;
+    let redirecting = false;
 
     if (preselectedRoom) {
         roomInput.value = preselectedRoom.toUpperCase();
@@ -266,7 +427,7 @@
     function selectRoom(code) {
         roomInput.value = code;
         document.querySelectorAll('.room-pill').forEach(el => {
-            el.classList.toggle('active', el.textContent.includes(code));
+            el.classList.toggle('active', el.dataset.code === code);
         });
     }
 
@@ -278,10 +439,16 @@
                 if (rooms && rooms.length > 0) {
                     activeRoomsContainer.innerHTML = '';
                     rooms.forEach(r => {
+                        const isFull = (r.runnersCount || 0) >= MAX_PLAYERS;
+                        const isStarted = r.status && r.status !== 'WAITING';
                         const pill = document.createElement('span');
-                        pill.className = `room-pill ${r.roomCode === roomInput.value.trim().toUpperCase() ? 'active' : ''}`;
-                        pill.innerHTML = `🏁 <strong>${r.roomCode}</strong> (${r.runnersCount || 0} 🏎️)`;
-                        pill.onclick = () => selectRoom(r.roomCode);
+                        pill.className = `room-pill ${r.roomCode === roomInput.value.trim().toUpperCase() ? 'active' : ''} ${isFull ? 'full' : ''} ${isStarted ? 'started' : ''}`;
+                        pill.dataset.code = r.roomCode;
+                        const statusIcon = isStarted ? '🔒' : (isFull ? '⛔' : '🏁');
+                        pill.innerHTML = `${statusIcon} <strong>${r.roomCode}</strong> (${r.runnersCount || 0}/${MAX_PLAYERS} 🏎️)`;
+                        if (!isFull && !isStarted) {
+                            pill.onclick = () => selectRoom(r.roomCode);
+                        }
                         activeRoomsContainer.appendChild(pill);
                     });
                 }
@@ -344,25 +511,190 @@
         document.getElementById('myRankStats').textContent = `${wins} / ${races} (${rate}%)`;
     }
 
+    // ---------- Crear sala (código elegido por el usuario) ----------
+    btnCreateRoom.addEventListener('click', async () => {
+        const desiredCode = createRoomInput.value.trim();
+        const pilot = pilotNameDisplay.textContent.trim();
+        createRoomError.style.display = 'none';
+        btnCreateRoom.disabled = true;
+        btnCreateRoom.textContent = "⏳ Creando...";
+
+        try {
+            const res = await fetch('/api/rooms/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ hostName: pilot, preferredCode: desiredCode || null })
+            });
+
+            if (res.status === 201) {
+                const room = await res.json();
+                enterWaitingRoom(room.roomCode);
+            } else {
+                const err = await res.json().catch(() => ({ error: 'No se pudo crear la sala.' }));
+                createRoomError.textContent = err.error || 'Ese código ya está en uso, elige otro.';
+                createRoomError.style.display = 'block';
+            }
+        } catch (e) {
+            createRoomError.textContent = 'Error de red al crear la sala.';
+            createRoomError.style.display = 'block';
+        } finally {
+            btnCreateRoom.disabled = false;
+            btnCreateRoom.textContent = "🆕 Crear";
+        }
+    });
+
+    // ---------- Unirse a sala existente ----------
     btnJoinRace.addEventListener('click', async () => {
         const room = roomInput.value.trim().toUpperCase() || 'CAMPUS-ECI';
         const pilot = pilotNameDisplay.textContent.trim();
+        joinRoomError.style.display = 'none';
+        btnJoinRace.disabled = true;
 
         try {
-            await fetch(`/api/rooms/${encodeURIComponent(room)}/join`, {
+            const res = await fetch(`/api/rooms/${encodeURIComponent(room)}/join`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ runnerId: pilot })
             });
-        } catch (e) {
-            console.warn("Fallo registro en sala, continuando a pista:", e);
-        }
 
-        window.location.href = `runner.html?player=${encodeURIComponent(pilot)}&room=${encodeURIComponent(room)}`;
+            if (res.ok) {
+                enterWaitingRoom(room);
+            } else {
+                const err = await res.json().catch(() => ({ error: 'No se pudo unir a la sala.' }));
+                joinRoomError.textContent = err.error || `No fue posible unirse a ${room}.`;
+                joinRoomError.style.display = 'block';
+            }
+        } catch (e) {
+            joinRoomError.textContent = 'Error de red al unirse a la sala.';
+            joinRoomError.style.display = 'block';
+        } finally {
+            btnJoinRace.disabled = false;
+        }
+    });
+
+    // ---------- Sala de espera: roster + control del host ----------
+    function enterWaitingRoom(roomCode) {
+        activeRoomCode = roomCode;
+        redirecting = false;
+        currentRoomCodeLabel.textContent = roomCode;
+        createRoomSection.style.display = 'none';
+        waitingRoomSection.style.display = 'block';
+
+        refreshRoomState();
+        if (roomPollInterval) clearInterval(roomPollInterval);
+        roomPollInterval = setInterval(refreshRoomState, 2000);
+
+        conectarSocketDeSala(roomCode);
+    }
+
+    function exitWaitingRoom() {
+        activeRoomCode = null;
+        waitingRoomSection.style.display = 'none';
+        createRoomSection.style.display = 'block';
+        if (roomPollInterval) clearInterval(roomPollInterval);
+        if (stompClient) {
+            try { stompClient.disconnect(); } catch (e) {}
+            stompClient = null;
+        }
+    }
+
+    async function refreshRoomState() {
+        if (!activeRoomCode || redirecting) return;
+        try {
+            const res = await fetch(`/api/rooms/${encodeURIComponent(activeRoomCode)}`);
+            if (!res.ok) return;
+            const room = await res.json();
+            renderWaitingRoom(room);
+        } catch (e) {
+            console.warn('No se pudo refrescar el estado de la sala:', e);
+        }
+    }
+
+    function renderWaitingRoom(room) {
+        const pilot = pilotNameDisplay.textContent.trim();
+        const soyHost = room.hostName && room.hostName.trim().toLowerCase() === pilot.toLowerCase();
+        const count = room.runnersCount || 0;
+
+        raceStatusBadge.textContent = room.status;
+        raceStatusBadge.style.color = room.status === 'IN_PROGRESS' ? 'var(--color-teal)' : 'var(--color-amber)';
+        rosterCountLabel.textContent = `${count} / ${MAX_PLAYERS}`;
+
+        const pct = Math.min(100, (count / MAX_PLAYERS) * 100);
+        capacityBarFill.style.width = `${pct}%`;
+        capacityBarFill.classList.toggle('full', count >= MAX_PLAYERS);
+
+        rosterGrid.innerHTML = '';
+        (room.activeRunners || []).forEach(name => {
+            const isHostRunner = room.hostName && name.trim().toLowerCase() === room.hostName.trim().toLowerCase();
+            const item = document.createElement('div');
+            item.className = `roster-item ${isHostRunner ? 'is-host' : ''}`;
+            item.innerHTML = `${isHostRunner ? '👑' : '🏎️'} ${name}`;
+            rosterGrid.appendChild(item);
+        });
+
+        hostControls.style.display = soyHost ? 'block' : 'none';
+        guestWaitingMsg.style.display = (!soyHost && room.status === 'WAITING') ? 'block' : 'none';
+        btnStartRace.disabled = room.status !== 'WAITING';
+
+        // Si la carrera ya inició, todos (host incluido) pasan a la pista.
+        if (room.status === 'IN_PROGRESS' && !redirecting) {
+            redirecting = true;
+            window.location.href = `runner.html?player=${encodeURIComponent(pilot)}&room=${encodeURIComponent(room.roomCode)}`;
+        }
+    }
+
+    btnStartRace.addEventListener('click', async () => {
+        const pilot = pilotNameDisplay.textContent.trim();
+        btnStartRace.disabled = true;
+        btnStartRace.textContent = "⏳ Iniciando...";
+
+        try {
+            const res = await fetch(`/api/rooms/${encodeURIComponent(activeRoomCode)}/start`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ hostName: pilot })
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ error: 'No se pudo iniciar la carrera.' }));
+                alert(err.error || 'No se pudo iniciar la carrera.');
+                btnStartRace.disabled = false;
+                btnStartRace.textContent = "🚀 INICIAR CARRERA";
+            }
+            // Si fue exitoso, la redirección la dispara el polling / el socket
+            // en cuanto vea status === 'IN_PROGRESS'.
+        } catch (e) {
+            alert('Error de red al iniciar la carrera.');
+            btnStartRace.disabled = false;
+            btnStartRace.textContent = "🚀 INICIAR CARRERA";
+        }
+    });
+
+    // Empuje en tiempo real (además del polling): en cuanto el host confirma
+    // el arranque, todos los sockets suscritos a la sala reciben el aviso.
+    function conectarSocketDeSala(roomCode) {
+        try {
+            const socket = new SockJS('/race-ws');
+            stompClient = Stomp.over(socket);
+            stompClient.debug = null;
+            stompClient.connect({}, () => {
+                stompClient.subscribe(`/topic/rooms/${roomCode}/status`, (msg) => {
+                    const updatedRoom = JSON.parse(msg.body);
+                    renderWaitingRoom(updatedRoom);
+                });
+            }, () => {
+                console.warn('No se pudo conectar el socket de la sala de espera; se sigue con polling.');
+            });
+        } catch (e) {
+            console.warn('SockJS/Stomp no disponible, se usa solo polling:', e);
+        }
+    }
+
+    btnLeaveWaitingRoom.addEventListener('click', () => {
+        exitWaitingRoom();
     });
 
     btnGoDashboard.addEventListener('click', () => {
-        const room = roomInput.value.trim().toUpperCase() || 'CAMPUS-ECI';
+        const room = (activeRoomCode || roomInput.value.trim().toUpperCase() || 'CAMPUS-ECI');
         window.location.href = `dashboard.html?room=${encodeURIComponent(room)}`;
     });
 
@@ -437,6 +769,12 @@
     cargarPerfil(activePilot);
     cargarSalasActivas();
     setInterval(cargarSalasActivas, 5000);
+
+    // Si llegamos con ?room= en la URL, entramos directo a su sala de espera
+    // (por ejemplo, al volver desde runner.html con btnLeaveWaitingRoom).
+    if (preselectedRoom) {
+        enterWaitingRoom(preselectedRoom.toUpperCase());
+    }
 </script>
 </body>
 </html>

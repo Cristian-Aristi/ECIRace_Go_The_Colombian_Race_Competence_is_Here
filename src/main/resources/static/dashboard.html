@@ -87,6 +87,17 @@
             border-bottom: 1px dashed var(--border-line);
         }
         .runner-item:last-child { border-bottom: none; }
+
+        #btnStartRaceDashboard {
+            margin-top: 0.85rem;
+            font-size: 0.95rem;
+            padding: 0.75rem;
+            font-weight: 700;
+        }
+        #btnStartRaceDashboard:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
@@ -109,14 +120,26 @@
         <span class="telemetry-value" id="status" style="color: var(--color-alert); font-weight: bold;">Desconectado</span>
     </div>
     <div class="telemetry-row">
+        <span class="telemetry-label">Estado de la Carrera:</span>
+        <span class="telemetry-value" id="raceStatusValue" style="color: var(--color-amber); font-weight: bold;">--</span>
+    </div>
+    <div class="telemetry-row">
         <span class="telemetry-label">Pilotos en Sala:</span>
-        <span class="telemetry-value" id="activeCount" style="color: var(--color-teal); font-weight: bold;">0</span>
+        <span class="telemetry-value" id="activeCount" style="color: var(--color-teal); font-weight: bold;">0 / 6</span>
     </div>
 
     <div class="runners-list-box" id="runnersList">
         <div style="color: var(--text-muted); text-align: center; padding: 0.5rem 0;">
             Esperando corredores en la sala...
         </div>
+    </div>
+
+    <!-- ===================== NUEVO: control de inicio directamente desde el dashboard ===================== -->
+    <button type="button" class="btn btn-primary" id="btnStartRaceDashboard" style="display:none;">
+        🚀 Iniciar Carrera
+    </button>
+    <div id="raceAlreadyStartedMsg" style="display:none; text-align:center; padding: 0.5rem 0; color: var(--color-teal); font-size: 0.8rem; font-family: monospace;">
+        🏁 Carrera en curso
     </div>
 
     <div style="display: flex; gap: 0.5rem; margin-top: 0.85rem;">
@@ -174,6 +197,14 @@
     const hostStatusBadge = document.getElementById('hostStatusBadge');
     const activeCountDisplay = document.getElementById('activeCount');
     const runnersList = document.getElementById('runnersList');
+    const raceStatusValue = document.getElementById('raceStatusValue');
+    const btnStartRaceDashboard = document.getElementById('btnStartRaceDashboard');
+    const raceAlreadyStartedMsg = document.getElementById('raceAlreadyStartedMsg');
+
+    // El dashboard fue quien creó la sala (flujo index.html -> dashboard.html),
+    // así que confiamos en el hostName que el propio servidor guardó para esta
+    // sala (no dependemos de localStorage, porque esta pantalla no pasa por login).
+    let hostNameDeLaSala = null;
 
     function conectarWebSocket() {
         const socket = new SockJS('/race-ws');
@@ -198,6 +229,11 @@
                 if (msgRoom === roomCode) {
                     actualizarMapaYLista(ubication);
                 }
+            });
+
+            stompClient.subscribe('/topic/rooms/' + roomCode + '/status', function (mensaje) {
+                const room = JSON.parse(mensaje.body);
+                aplicarEstadoDeSala(room);
             });
 
         }, function () {
@@ -253,25 +289,87 @@
         renderizarListaCorredores();
     }
 
-    function renderizarListaCorredores() {
-        const keys = Object.keys(corredores);
-        activeCountDisplay.innerText = keys.length;
+    // ---------- Roster de la sala + control de arranque ----------
+    let ultimoRosterConocido = [];
 
-        if (keys.length === 0) {
+    async function refrescarRosterDeSala() {
+        try {
+            const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}`);
+            if (!res.ok) return;
+            const room = await res.json();
+            aplicarEstadoDeSala(room);
+        } catch (e) {
+            console.warn('No se pudo refrescar el roster de la sala:', e);
+        }
+    }
+
+    function aplicarEstadoDeSala(room) {
+        hostNameDeLaSala = room.hostName;
+
+        raceStatusValue.textContent = room.status;
+        raceStatusValue.style.color = room.status === 'IN_PROGRESS' ? 'var(--color-teal)' : 'var(--color-amber)';
+
+        ultimoRosterConocido = room.activeRunners || [];
+        renderizarListaCorredores();
+
+        if (room.status === 'WAITING') {
+            btnStartRaceDashboard.style.display = 'block';
+            raceAlreadyStartedMsg.style.display = 'none';
+        } else {
+            btnStartRaceDashboard.style.display = 'none';
+            raceAlreadyStartedMsg.style.display = 'block';
+        }
+    }
+
+    btnStartRaceDashboard.addEventListener('click', async () => {
+        if (!hostNameDeLaSala) {
+            alert('Todavía no se ha cargado la información de la sala, espera un segundo.');
+            return;
+        }
+        btnStartRaceDashboard.disabled = true;
+        btnStartRaceDashboard.textContent = "⏳ Iniciando...";
+
+        try {
+            const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}/start`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ hostName: hostNameDeLaSala })
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ error: 'No se pudo iniciar la carrera.' }));
+                alert(err.error || 'No se pudo iniciar la carrera.');
+                btnStartRaceDashboard.disabled = false;
+                btnStartRaceDashboard.textContent = "🚀 Iniciar Carrera";
+            }
+            // Si fue exitoso, el propio socket de /topic/rooms/{code}/status
+            // actualiza la UI (oculta el botón, muestra "Carrera en curso").
+        } catch (e) {
+            alert('Error de red al iniciar la carrera.');
+            btnStartRaceDashboard.disabled = false;
+            btnStartRaceDashboard.textContent = "🚀 Iniciar Carrera";
+        }
+    });
+
+    function renderizarListaCorredores() {
+        const idsUnidos = ultimoRosterConocido;
+        activeCountDisplay.innerText = `${idsUnidos.length} / 6`;
+
+        if (idsUnidos.length === 0) {
             runnersList.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 0.5rem 0;">Esperando corredores en la sala...</div>';
             return;
         }
 
         runnersList.innerHTML = '';
-        keys.forEach(id => {
-            const data = corredores[id];
+        idsUnidos.forEach(id => {
+            const transmitiendo = corredores[id] !== undefined;
             const item = document.createElement('div');
             item.className = 'runner-item';
-            const alertColor = data.suspicious ? 'var(--color-alert)' : 'var(--color-teal)';
-            const alertIcon = data.suspicious ? '🚨' : '🏎️';
+            const alertColor = (transmitiendo && corredores[id].suspicious) ? 'var(--color-alert)' : (transmitiendo ? 'var(--color-teal)' : 'var(--text-muted)');
+            const alertIcon = transmitiendo ? (corredores[id].suspicious ? '🚨' : '🏎️') : '🟡';
+            const valueText = transmitiendo ? `${corredores[id].speed.toFixed(1)} km/h` : 'En sala';
             item.innerHTML = `
                 <span>${alertIcon} ${id}</span>
-                <span style="color: ${alertColor};">${data.speed.toFixed(1)} km/h</span>
+                <span style="color: ${alertColor};">${valueText}</span>
             `;
             runnersList.appendChild(item);
         });
@@ -295,6 +393,8 @@
     });
 
     conectarWebSocket();
+    refrescarRosterDeSala();
+    setInterval(refrescarRosterDeSala, 2000);
 </script>
 </body>
 </html>

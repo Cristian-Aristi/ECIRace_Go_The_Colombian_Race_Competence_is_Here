@@ -249,6 +249,16 @@
 
 <script>
 
+    // ---------- Preservar ?room= del enlace de invitación durante TODO el login ----------
+    const inviteUrlParams = new URLSearchParams(window.location.search);
+    const roomFromInviteLink = inviteUrlParams.get('room');
+
+    function irALobby(preselectedRoom) {
+        window.location.href = preselectedRoom
+            ? `lobby.html?room=${encodeURIComponent(preselectedRoom)}`
+            : 'lobby.html';
+    }
+
     function detectDevice() {
         const ua = navigator.userAgent || navigator.vendor || window.opera;
         const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
@@ -279,7 +289,13 @@
         }
     }
 
-    if (detected === 'DESKTOP') {
+    if (roomFromInviteLink) {
+        // Si viene de un link de invitación (?room=CODIGO), siempre priorizamos
+        // la vista de piloto móvil, sin importar el dispositivo detectado.
+        deviceIcon.textContent = '📱';
+        deviceText.textContent = 'INVITADO A SALA';
+        switchRole('MOBILE');
+    } else if (detected === 'DESKTOP') {
         deviceIcon.textContent = '🖥️';
         deviceText.textContent = 'COMPUTADOR (PC)';
         switchRole('DESKTOP');
@@ -310,6 +326,12 @@
             if (res.ok) {
                 const room = await res.json();
                 window.location.href = `dashboard.html?room=${encodeURIComponent(room.roomCode)}`;
+                return;
+            } else {
+                const err = await res.json().catch(() => ({ error: 'Ese código ya está en uso.' }));
+                alert(err.error || 'No se pudo crear la sala.');
+                btnCreateRoomAndGo.disabled = false;
+                btnCreateRoomAndGo.textContent = "🚀 CREAR SALA Y ABRIR DASHBOARD ▶";
                 return;
             }
         } catch (err) {
@@ -440,7 +462,7 @@
 
     function guardarSesionYRedirigir(username) {
         localStorage.setItem('ecirace_username', username);
-        window.location.href = 'lobby.html';
+        irALobby(roomFromInviteLink);
     }
 
     window.addEventListener('DOMContentLoaded', () => {
@@ -452,7 +474,7 @@
     });
 
     btnContinueToLobby.addEventListener('click', () => {
-        window.location.href = 'lobby.html';
+        irALobby(roomFromInviteLink);
     });
 
     btnLogoutCurrent.addEventListener('click', () => {

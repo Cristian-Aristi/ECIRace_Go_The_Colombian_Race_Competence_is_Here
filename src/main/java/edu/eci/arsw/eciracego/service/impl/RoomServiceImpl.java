@@ -1,6 +1,8 @@
 package edu.eci.arsw.eciracego.service.impl;
 
 import edu.eci.arsw.eciracego.model.Room;
+import edu.eci.arsw.eciracego.model.RoomActionResult;
+import edu.eci.arsw.eciracego.model.RoomJoinResult;
 import edu.eci.arsw.eciracego.service.RoomService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,23 +28,29 @@ public class RoomServiceImpl implements RoomService {
     }
 
     @Override
-    public Room createRoom(String hostName, String preferredCode) {
+    public Optional<Room> createRoom(String hostName, String preferredCode) {
         String finalHost = (hostName != null && !hostName.trim().isEmpty()) ? hostName.trim() : "Host_Central";
-        String roomCode;
-
-        if (preferredCode != null && !preferredCode.trim().isEmpty()) {
-            roomCode = preferredCode.trim().toUpperCase().replaceAll("[^A-Z0-9_-]", "");
-            if (roomCode.isEmpty()) {
-                roomCode = generateUniqueCode();
-            }
-        } else {
-            roomCode = generateUniqueCode();
-        }
+        String roomCode = normalizeOrGenerate(preferredCode);
 
         Room newRoom = new Room(roomCode, finalHost);
-        rooms.put(roomCode, newRoom);
-        log.info("[RoomService] Nueva sala creada con éxito: {} por host: {}", roomCode, finalHost);
-        return newRoom;
+        // putIfAbsent es ATÓMICO: soluciona la condición de carrera de dos
+        // hosts creando el mismo código al mismo tiempo, y evita sobrescribir
+        // una sala existente.
+        Room existing = rooms.putIfAbsent(roomCode, newRoom);
+        if (existing != null) {
+            log.warn("[RoomService] Código de sala {} ya está en uso", roomCode);
+            return Optional.empty();
+        }
+        log.info("[RoomService] 🆕 Sala creada: {} | Host: {}", roomCode, finalHost);
+        return Optional.of(newRoom);
+    }
+
+    private String normalizeOrGenerate(String preferredCode) {
+        if (preferredCode != null && !preferredCode.trim().isEmpty()) {
+            String normalized = preferredCode.trim().toUpperCase().replaceAll("[^A-Z0-9_-]", "");
+            if (!normalized.isEmpty()) return normalized;
+        }
+        return generateUniqueCode();
     }
 
     @Override
@@ -63,15 +71,40 @@ public class RoomServiceImpl implements RoomService {
     }
 
     @Override
-    public void registerRunnerInRoom(String roomCode, String runnerId) {
-        if (roomCode == null || runnerId == null) return;
-        String code = roomCode.trim().toUpperCase();
-        Room room = rooms.computeIfAbsent(code, k -> {
-            log.info("[RoomService] Creando automáticamente sala {} para corredor {}", k, runnerId);
-            return new Room(k, "AutoHost");
-        });
-        room.addRunner(runnerId);
-        log.info("[RoomService] Corredor {} registrado en sala {}", runnerId, code);
+    public RoomJoinResult registerRunnerInRoom(String roomCode, String runnerId) {
+        if (roomCode == null) return RoomJoinResult.ROOM_NOT_FOUND;
+        Room room = rooms.get(roomCode.trim().toUpperCase());
+        if (room == null) {
+            return RoomJoinResult.ROOM_NOT_FOUND;
+        }
+        RoomJoinResult result = room.addRunner(runnerId);
+        log.info("[RoomService] 🏎️ {} intenta unirse a {} -> {}", runnerId, roomCode, result);
+        return result;
+    }
+
+    @Override
+    public RoomActionResult startRace(String roomCode, String requesterName) {
+        if (roomCode == null) return RoomActionResult.NOT_FOUND;
+        Room room = rooms.get(roomCode.trim().toUpperCase());
+        if (room == null) return RoomActionResult.NOT_FOUND;
+
+        if (!room.isHost(requesterName)) {
+            log.warn("[RoomService] 🚫 {} intentó iniciar {} sin ser el host (host real: {})",
+                    requesterName, roomCode, room.getHostName());
+            return RoomActionResult.NOT_HOST;
+        }
+        boolean started = room.startRace(requesterName);
+        if (!started) return RoomActionResult.ALREADY_STARTED;
+
+        log.info("[RoomService] 🏁 Sala {} iniciada por el host {}", roomCode, requesterName);
+        return RoomActionResult.SUCCESS;
+    }
+
+    @Override
+    public boolean isRaceInProgress(String roomCode) {
+        return getRoom(roomCode)
+                .map(r -> r.getStatus() == Room.RoomStatus.IN_PROGRESS)
+                .orElse(false);
     }
 
     @Override

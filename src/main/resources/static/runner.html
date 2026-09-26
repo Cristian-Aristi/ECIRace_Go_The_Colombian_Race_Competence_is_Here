@@ -24,6 +24,16 @@
 
 <main class="main-container">
 
+    <section class="card" id="raceGateCard" style="display:none; border-color: var(--color-amber);">
+        <div class="card-header">
+            <span class="card-title">🚦 Esperando Señal de Largada</span>
+        </div>
+        <p style="font-size: 0.85rem; color: var(--text-muted);">
+            El host de la sala <strong id="gateRoomCode">--</strong> aún no ha iniciado la carrera.
+            No podrás transmitir tu GPS hasta que él presione "Iniciar Carrera" en el lobby.
+        </p>
+    </section>
+
     <section class="card">
         <div class="card-header">
             <span class="card-title">Identificación del Corredor</span>
@@ -35,6 +45,10 @@
         <div class="telemetry-row">
             <span class="telemetry-label">Sala de Carrera:</span>
             <span class="telemetry-value" id="roomDisplay" style="color: var(--color-teal); font-weight: bold;">--</span>
+        </div>
+        <div class="telemetry-row">
+            <span class="telemetry-label">Estado de la Carrera:</span>
+            <span class="telemetry-value" id="raceStateDisplay" style="color: var(--color-amber);">CONSULTANDO...</span>
         </div>
         <div class="telemetry-row">
             <span class="telemetry-label">Canal WebSocket:</span>
@@ -76,11 +90,11 @@
 
     <section class="card">
         <div class="grid-2">
-            <button type="button" id="btnStartGps" class="btn btn-primary">📡 Iniciar GPS Real</button>
+            <button type="button" id="btnStartGps" class="btn btn-primary" disabled>📡 Iniciar GPS Real</button>
             <button type="button" id="btnStopGps" class="btn btn-danger" disabled>🛑 Detener Rastreo</button>
         </div>
         <div style="margin-top: 0.75rem;">
-            <button type="button" id="btnToggleSim" class="btn btn-secondary">🎮 Activar Simulador de Ruta (Campus ECI)</button>
+            <button type="button" id="btnToggleSim" class="btn btn-secondary" disabled>🎮 Activar Simulador de Ruta (Campus ECI)</button>
         </div>
     </section>
 
@@ -104,6 +118,7 @@
     const roomCode = (urlParams.get('room') || 'CAMPUS-ECI').toUpperCase();
     document.getElementById('runnerIdDisplay').innerText = runnerId;
     document.getElementById('roomDisplay').innerText = roomCode;
+    document.getElementById('gateRoomCode').innerText = roomCode;
 
     const hudStatus = document.getElementById('hudStatus');
     const sourceBadge = document.getElementById('sourceBadge');
@@ -116,6 +131,8 @@
     const btnStartGps = document.getElementById('btnStartGps');
     const btnStopGps = document.getElementById('btnStopGps');
     const btnToggleSim = document.getElementById('btnToggleSim');
+    const raceGateCard = document.getElementById('raceGateCard');
+    const raceStateDisplay = document.getElementById('raceStateDisplay');
 
     let watchId = null;
     let simInterval = null;
@@ -124,6 +141,7 @@
     let networkInterval = null;
     let currentPosition = null;
     let packetsSent = 0;
+    let raceInProgress = false; // gate: solo se puede transmitir si es true
     const wsStatusDisplay = document.getElementById('wsStatusDisplay');
     const packetsCountDisplay = document.getElementById('packetsCountDisplay');
 
@@ -147,6 +165,33 @@
         eventLog.scrollTop = eventLog.scrollHeight;
     }
 
+    // ---------- Compuerta de arranque: no dejar correr sin luz verde del host ----------
+    function applyGateState(status) {
+        raceInProgress = (status === 'IN_PROGRESS');
+        raceStateDisplay.textContent = status;
+        raceStateDisplay.style.color = raceInProgress ? 'var(--color-teal)' : 'var(--color-amber)';
+        raceGateCard.style.display = raceInProgress ? 'none' : 'block';
+
+        const isTracking = (watchId !== null || simInterval !== null);
+        btnStartGps.disabled = !raceInProgress || isTracking;
+        btnToggleSim.disabled = !raceInProgress || isTracking;
+        // btnStopGps se maneja por su propio flujo de start/stop
+    }
+
+    async function consultarEstadoSala() {
+        try {
+            const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}`);
+            if (res.ok) {
+                const room = await res.json();
+                applyGateState(room.status);
+            } else {
+                applyGateState('WAITING');
+            }
+        } catch (e) {
+            log('No se pudo consultar el estado de la sala, reintentando...', 'warn');
+        }
+    }
+
     function conectarWebSocket() {
         const socket = new SockJS('/race-ws');
         stompClient = Stomp.over(socket);
@@ -158,6 +203,16 @@
                 wsStatusDisplay.style.color = "var(--color-teal)";
             }
             log(`Conexión WebSocket establecida para sala ${roomCode}.`, "info");
+
+            // Suscripción a la señal de arranque de ESTA sala: en cuanto el
+            // host presiona "Iniciar Carrera", se habilita el GPS al instante.
+            stompClient.subscribe(`/topic/rooms/${roomCode}/status`, (msg) => {
+                const room = JSON.parse(msg.body);
+                applyGateState(room.status);
+                if (room.status === 'IN_PROGRESS') {
+                    log('🏁 ¡El host inició la carrera! GPS habilitado.', 'info');
+                }
+            });
         }, function (error) {
             isWsConnected = false;
             if (wsStatusDisplay) {
@@ -171,7 +226,7 @@
     function iniciarTransmisionContinua() {
         if (networkInterval !== null) clearInterval(networkInterval);
         networkInterval = setInterval(() => {
-            if (isWsConnected && currentPosition) {
+            if (isWsConnected && currentPosition && raceInProgress) {
                 const payload = {
                     corredorId: runnerId,
                     runnerId: runnerId,
@@ -198,6 +253,7 @@
     }
 
     conectarWebSocket();
+    consultarEstadoSala();
 
     function updateUI(lat, lng, acc, speed, source) {
         currentPosition = { lat, lng };
@@ -216,12 +272,17 @@
     }
 
     btnStartGps.addEventListener('click', () => {
+        if (!raceInProgress) {
+            alert('El host todavía no ha iniciado la carrera.');
+            return;
+        }
         if (!("geolocation" in navigator)) {
             alert("Geolocalización no soportada en este navegador.");
             return;
         }
         btnStartGps.disabled = true;
         btnStopGps.disabled = false;
+        btnToggleSim.disabled = true;
         log("Iniciando sensor GPS de alta precisión...", "info");
 
         watchId = navigator.geolocation.watchPosition((pos) => {
@@ -250,7 +311,8 @@
 
         detenerTransmisionContinua();
 
-        btnStartGps.disabled = false;
+        btnStartGps.disabled = !raceInProgress;
+        btnToggleSim.disabled = !raceInProgress;
         btnStopGps.disabled = true;
         hudStatus.textContent = "STANDBY";
         hudStatus.style.color = "var(--color-alert)";
@@ -259,11 +321,15 @@
     });
 
     btnToggleSim.addEventListener('click', () => {
+        if (!raceInProgress) {
+            alert('El host todavía no ha iniciado la carrera.');
+            return;
+        }
         if (simInterval !== null) {
             clearInterval(simInterval);
             simInterval = null;
             detenerTransmisionContinua();
-            btnStartGps.disabled = false;
+            btnStartGps.disabled = !raceInProgress;
             btnStopGps.disabled = true;
             btnToggleSim.textContent = "🎮 Activar Simulador de Ruta (Campus ECI)";
             hudStatus.textContent = "STANDBY";

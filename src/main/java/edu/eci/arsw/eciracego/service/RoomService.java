@@ -1,8 +1,12 @@
 package edu.eci.arsw.eciracego.service;
 
 import edu.eci.arsw.eciracego.model.Room;
+import edu.eci.arsw.eciracego.model.RoomActionResult;
+import edu.eci.arsw.eciracego.model.RoomJoinResult;
+
 import java.util.Collection;
 import java.util.Optional;
+
 
 public interface RoomService {
 
@@ -10,9 +14,10 @@ public interface RoomService {
      * Crea una nueva sala de competición.
      * @param hostName Nombre del host o dispositivo central.
      * @param preferredCode Código deseado o null/vacío para autogenerar.
-     * @return La sala creada.
+     * @return La sala opcional creada.
      */
-    Room createRoom(String hostName, String preferredCode);
+    Optional<Room> createRoom(String hostName, String preferredCode);
+
 
     /**
      * Obtiene una sala por su código alfanumérico.
@@ -39,7 +44,7 @@ public interface RoomService {
      * @param roomCode Código de la sala.
      * @param runnerId Identificador del corredor.
      */
-    void registerRunnerInRoom(String roomCode, String runnerId);
+    RoomJoinResult registerRunnerInRoom(String roomCode, String runnerId);
 
     /**
      * Retira a un corredor de la sala.
@@ -47,4 +52,8 @@ public interface RoomService {
      * @param runnerId Identificador del corredor.
      */
     void removeRunnerFromRoom(String roomCode, String runnerId);
+
+    RoomActionResult startRace(String roomCode, String requesterName);
+    boolean isRaceInProgress(String roomCode);
+
 }
