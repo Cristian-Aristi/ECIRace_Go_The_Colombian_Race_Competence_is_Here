@@ -48,4 +48,18 @@ public class AntiCheatEngineTest {
         double speed = antiCheatEngine.calculateSpeedKmH(p1, p2);
         assertFalse(antiCheatEngine.isSuspicious(speed), "Una velocidad humana de trote no debe ser trampa");
     }
+
+    @Test
+    void shouldRejectSpeedExceedingMaximumAllowed() {
+        long now = System.currentTimeMillis();
+        Ubication p1 = new Ubication("runner1", 4.782800, -74.043000);
+        p1.setTimestamp(now);
+
+        Ubication p2 = new Ubication("runner1", 4.783000, -74.043000);
+        p2.setTimestamp(now + 1000);
+
+        double speed = antiCheatEngine.calculateSpeedKmH(p1, p2);
+        assertTrue(speed > 30.0, "Speed must exceed threshold");
+        assertTrue(antiCheatEngine.isSuspicious(speed), "Movement must be flagged as suspicious");
+    }
 }
