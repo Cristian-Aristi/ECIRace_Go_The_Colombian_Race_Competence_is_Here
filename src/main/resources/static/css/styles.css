@@ -145,6 +145,29 @@ header {
   width: 100%;
 }
 
+.vehicle-btn {
+  flex: 1;
+  padding: 0.65rem 0.5rem;
+  background-color: var(--bg-panel2);
+  border: 1px solid var(--border-line);
+  border-radius: 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.vehicle-btn:hover {
+  border-color: var(--color-amber);
+  color: var(--text-paper);
+}
+.vehicle-btn.active {
+  border: 2px solid var(--color-amber) !important;
+  background-color: rgba(232, 163, 61, 0.18) !important;
+  color: var(--color-amber) !important;
+  box-shadow: 0 0 10px rgba(232, 163, 61, 0.3);
+}
+
 .btn-primary { background-color: var(--color-amber); color: #14171a; }
 .btn-primary:hover { background-color: #f5b045; }
 .btn-danger { background-color: rgba(214, 88, 75, 0.2); color: var(--color-alert); border: 1px solid var(--color-alert); }
