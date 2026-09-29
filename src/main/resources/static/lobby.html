@@ -169,6 +169,23 @@
                 <span class="telemetry-label">Rango de Piloto:</span>
                 <span class="telemetry-value" id="rankBadge" style="color: var(--color-amber);">★ (ROOKIE)</span>
             </div>
+
+            <div style="margin-top: 1rem; border-top: 1px dashed var(--border-line); padding-top: 1rem;">
+                <label style="display:block; font-size: 0.85rem; font-weight:600; color: var(--color-amber); margin-bottom: 0.5rem; font-family: monospace;">
+                    SELECCIONA TU VEHÍCULO (SPRINT 1):
+                </label>
+                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                    <button type="button" class="btn btn-secondary vehicle-btn active" data-vehicle="RENAULT_4" style="flex:1; border-color: #E8A33D;">
+                        Renault 4
+                    </button>
+                    <button type="button" class="btn btn-secondary vehicle-btn" data-vehicle="CHEVROLET_SPARK" style="flex:1;">
+                        Spark GT
+                    </button>
+                    <button type="button" class="btn btn-secondary vehicle-btn" data-vehicle="MAZDA_323" style="flex:1;">
+                        Mazda 323
+                    </button>
+                </div>
+            </div>
         </div>
     </section>
 
@@ -370,7 +387,7 @@
 </div>
 
 <script>
-    // ---------- Leer ?room= ANTES del guard, para no perderlo al redirigir a index.html ----------
+
     const urlParams = new URLSearchParams(window.location.search);
     const preselectedRoom = urlParams.get('room');
 
@@ -770,11 +787,22 @@
     cargarSalasActivas();
     setInterval(cargarSalasActivas, 5000);
 
-    // Si llegamos con ?room= en la URL, entramos directo a su sala de espera
-    // (por ejemplo, al volver desde runner.html con btnLeaveWaitingRoom).
     if (preselectedRoom) {
         enterWaitingRoom(preselectedRoom.toUpperCase());
     }
+
+    document.querySelectorAll('.vehicle-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.vehicle-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            localStorage.setItem('ecirace_vehicle', btn.dataset.vehicle);
+        });
+    });
+    const savedVehicle = localStorage.getItem('ecirace_vehicle') || 'RENAULT_4';
+    const activeBtn = document.querySelector(`.vehicle-btn[data-vehicle="${savedVehicle}"]`);
+    if (activeBtn) activeBtn.classList.add('active');
+
+
 </script>
 </body>
 </html>

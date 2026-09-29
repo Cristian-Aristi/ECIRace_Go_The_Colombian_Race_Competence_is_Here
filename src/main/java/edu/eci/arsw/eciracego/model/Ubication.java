@@ -8,6 +8,7 @@ public class Ubication {
     private double speed = 0.0;
     private boolean suspicious = false;
     private String roomCode = "CAMPUS-ECI";
+    private VehicleType vehicleType = VehicleType.RENAULT_4;
 
 
     public Ubication() {}
@@ -63,6 +64,15 @@ public class Ubication {
     public String getRoomCode() { return roomCode; }
     public void setRoomCode(String roomCode) {
         this.roomCode = (roomCode != null && !roomCode.trim().isEmpty()) ? roomCode.trim().toUpperCase() : "CAMPUS-ECI";
+    }
+
+    public VehicleType getVehicleType() {
+        return vehicleType;
+    }
+    public void setVehicleType(VehicleType vehicleType) {
+        if (vehicleType != null) {
+            this.vehicleType = vehicleType;
+        }
     }
 
 }
