@@ -1,6 +1,6 @@
 package edu.eci.arsw.eciracego.controller;
 
-import edu.eci.arsw.eciracego.model.RaceManager;
+import edu.eci.arsw.eciracego.service.RaceManager;
 import edu.eci.arsw.eciracego.model.Room;
 import edu.eci.arsw.eciracego.model.Ubication;
 import edu.eci.arsw.eciracego.service.RoomService;

@@ -1,6 +1,5 @@
 package edu.eci.arsw.eciracego.service;
 
-import edu.eci.arsw.eciracego.model.RaceManager;
 import edu.eci.arsw.eciracego.model.Ubication;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

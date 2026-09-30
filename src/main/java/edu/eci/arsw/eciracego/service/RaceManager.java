@@ -1,6 +1,6 @@
-package edu.eci.arsw.eciracego.model;
+package edu.eci.arsw.eciracego.service;
 
-import edu.eci.arsw.eciracego.service.AntiCheatEngine;
+import edu.eci.arsw.eciracego.model.Ubication;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 

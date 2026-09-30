@@ -1,6 +1,6 @@
 package edu.eci.arsw.eciracego;
 
-import edu.eci.arsw.eciracego.model.RaceManager;
+import edu.eci.arsw.eciracego.service.RaceManager;
 import edu.eci.arsw.eciracego.model.Ubication;
 import edu.eci.arsw.eciracego.service.AntiCheatEngine;
 import edu.eci.arsw.eciracego.service.GameLoopService;
