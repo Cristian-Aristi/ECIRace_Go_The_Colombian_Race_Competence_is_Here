@@ -1,15 +1,18 @@
 package edu.eci.arsw.eciracego.model;
 
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+
 import java.io.Serializable;
 
-/**
- * Representa el perfil del piloto y sus estadísticas dentro del ecosistema ECIRace GO.
- * Aplica el principio de Responsabilidad Única (SRP).
- */
+@Entity
+@Table(name = "user_profiles")
 public class UserProfile implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
+    @Id
     private String username;
     private String email;
     private String fullName;

@@ -18,7 +18,21 @@ class AuthServiceTest {
 
     @BeforeEach
     void setUp() {
-        authService = new AuthServiceImpl();
+        edu.eci.arsw.eciracego.repository.UserProfileRepository repo = org.mockito.Mockito.mock(
+                edu.eci.arsw.eciracego.repository.UserProfileRepository.class
+        );
+        org.mockito.Mockito.when(repo.save(org.mockito.ArgumentMatchers.any(UserProfile.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        org.mockito.Mockito.when(repo.findById("Daniel"))
+                .thenReturn(Optional.of(new UserProfile("Daniel", "daniel@escuelaing.edu.co", "Daniel", "", 125, 48, 5.0)));
+        org.mockito.Mockito.when(repo.findById("Santiago"))
+                .thenReturn(Optional.of(new UserProfile("Santiago", "santiago@escuelaing.edu.co", "Santiago", "", 125, 48, 5.0)));
+        org.mockito.Mockito.when(repo.findById("CorredorPrueba"))
+                .thenReturn(Optional.of(new UserProfile("CorredorPrueba", "test@mail.com", "Corredor Prueba", "", 0, 0, 0.0)));
+        org.mockito.Mockito.when(repo.existsById("PilotoNuevo")).thenReturn(true);
+        org.mockito.Mockito.when(repo.existsById("Daniel_Speed")).thenReturn(true);
+
+        authService = new AuthServiceImpl(repo);
     }
 
     @Test
