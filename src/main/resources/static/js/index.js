@@ -25,7 +25,7 @@ const tabMobile = document.getElementById('tabMobile');
 const desktopView = document.getElementById('desktopView');
 const mobileView = document.getElementById('mobileView');
 
-function switchRole(role) {
+window.switchRole = function(role) {
     if (role === 'DESKTOP') {
         tabDesktop.classList.add('active');
         tabMobile.classList.remove('active');
