@@ -73,9 +73,20 @@ public class RoomController {
 
     @PostMapping("/{code}/start")
     public ResponseEntity<?> startRace(@PathVariable("code") String code,
-                                        @RequestBody Map<String, String> body) {
-        String requester = (body != null) ? body.get("hostName") : null;
-        RoomActionResult result = roomService.startRace(code, requester);
+                                       @RequestBody Map<String, Object> body) {
+        String requester = (body != null && body.get("hostName") != null) ? body.get("hostName").toString() : null;
+
+        // Coordenadas por defecto (Entrada ECI) por si alguien inicia desde el lobby sin mapa
+        double metaLat = 4.782800;
+        double metaLon = -74.043000;
+
+        if (body != null && body.containsKey("metaLat") && body.containsKey("metaLon")) {
+            metaLat = Double.parseDouble(body.get("metaLat").toString());
+            metaLon = Double.parseDouble(body.get("metaLon").toString());
+        }
+
+        // Pasamos las coordenadas al servicio
+        RoomActionResult result = roomService.startRace(code, requester, metaLat, metaLon);
 
         return switch (result) {
             case SUCCESS -> {

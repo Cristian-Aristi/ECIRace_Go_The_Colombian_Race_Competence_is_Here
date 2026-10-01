@@ -108,10 +108,11 @@ public class RoomServiceTest {
         roomService.createRoom("HostOficial", code);
         roomService.registerRunnerInRoom(code, "Invitado1");
 
-        var rejected = roomService.startRace(code, "Invitado1");
+        // Se pasan las coordenadas de la meta (Lat, Lon) como requiere la nueva firma
+        var rejected = roomService.startRace(code, "Invitado1", 4.782800, -74.043000);
         assertEquals(edu.eci.arsw.eciracego.model.RoomActionResult.NOT_HOST, rejected);
 
-        var accepted = roomService.startRace(code, "HostOficial");
+        var accepted = roomService.startRace(code, "HostOficial", 4.782800, -74.043000);
         assertEquals(edu.eci.arsw.eciracego.model.RoomActionResult.SUCCESS, accepted);
 
         Room room = roomService.getRoom(code).orElseThrow();

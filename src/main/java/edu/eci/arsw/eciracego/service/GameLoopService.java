@@ -33,7 +33,7 @@ public class GameLoopService {
         this.antiCheatEngine = antiCheatEngine;
     }
 
-    @Scheduled(fixedRate = 33)
+    @Scheduled(fixedRate = 100)
     public void processGameTick() {
         Collection<Ubication> currentState = raceManager.getGlobalState();
         if (currentState == null || currentState.isEmpty()) {
@@ -42,13 +42,50 @@ public class GameLoopService {
 
         gridLock.lock();
         try {
+            checkFinishLine(currentState);
+
             resolveCollisions(currentState);
+
             messagingTemplate.convertAndSend("/topic/gamestate", currentState);
         } finally {
             gridLock.unlock(); // Guaranteed lock release
         }
     }
 
+    private void checkFinishLine(Collection<Ubication> runners) {
+        for (Ubication ubication : runners) {
+            String roomCode = ubication.getRoomCode();
+            if (roomCode == null) continue;
+
+            // Obtenemos la sala desde el RaceManager (asegúrate de tener este método getRoom)
+            edu.eci.arsw.eciracego.model.Room room = raceManager.getRoom(roomCode);
+
+            // Solo evaluamos si la sala existe y la carrera está en curso
+            if (room != null && room.getStatus() == edu.eci.arsw.eciracego.model.Room.RoomStatus.IN_PROGRESS) {
+
+                double distanceToMeta = calculateDistanceMeters(
+                        ubication.getLatitude(), ubication.getLongitude(),
+                        room.getMetaLat(), room.getMetaLon()
+                );
+
+                // Si entra al radio de la meta (Ej. 15 metros)
+                if (distanceToMeta <= room.getRadioMetaMetros()) {
+
+                    // Intento atómico (Thread-Safe) gracias al synchronized que pusimos en Room
+                    boolean isWinner = room.declareWinner(ubication.getRunnerId());
+
+                    if (isWinner) {
+                        log.info("🏁 GANADOR DETECTADO: {} en sala {}", ubication.getRunnerId(), roomCode);
+
+                        // Notificar a los clientes que la carrera terminó
+                        messagingTemplate.convertAndSend("/topic/rooms/" + roomCode + "/status", room);
+
+                        // TODO: Aquí llamarás a raceManager.guardarResultados(room) para usar JPA
+                    }
+                }
+            }
+        }
+    }
     public void resolveCollisions(Collection<Ubication> runners) {
         if (runners.size() < 2) {
             return;
@@ -87,5 +124,16 @@ public class GameLoopService {
 
     public boolean isGridLockHeld() {
         return gridLock.isLocked();
+    }
+
+    public double calculateDistanceMeters(double lat1, double lon1, double lat2, double lon2) {
+        final int RADIO_TIERRA = 6371000; // Radio de la Tierra en metros
+        double dLat = Math.toRadians(lat2 - lat1);
+        double dLon = Math.toRadians(lon2 - lon1);
+        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
+                        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return RADIO_TIERRA * c;
     }
 }

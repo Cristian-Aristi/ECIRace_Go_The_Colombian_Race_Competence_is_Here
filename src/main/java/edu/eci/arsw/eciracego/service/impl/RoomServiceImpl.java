@@ -83,21 +83,23 @@ public class RoomServiceImpl implements RoomService {
     }
 
     @Override
-    public RoomActionResult startRace(String roomCode, String requesterName) {
-        if (roomCode == null) return RoomActionResult.NOT_FOUND;
-        Room room = rooms.get(roomCode.trim().toUpperCase());
-        if (room == null) return RoomActionResult.NOT_FOUND;
+    public RoomActionResult startRace(String roomCode, String requester, double metaLat, double metaLon) {
 
-        if (!room.isHost(requesterName)) {
-            log.warn("[RoomService] 🚫 {} intentó iniciar {} sin ser el host (host real: {})",
-                    requesterName, roomCode, room.getHostName());
-            return RoomActionResult.NOT_HOST;
+        Room room = this.rooms.get(roomCode);
+
+        if (room == null) {
+            return RoomActionResult.NOT_FOUND;
         }
-        boolean started = room.startRace(requesterName);
-        if (!started) return RoomActionResult.ALREADY_STARTED;
 
-        log.info("[RoomService] 🏁 Sala {} iniciada por el host {}", roomCode, requesterName);
-        return RoomActionResult.SUCCESS;
+        boolean success = room.startRace(requester, metaLat, metaLon);
+
+        if (success) {
+            return RoomActionResult.SUCCESS;
+        } else if (!room.isHost(requester)) {
+            return RoomActionResult.NOT_HOST;
+        } else {
+            return RoomActionResult.ALREADY_STARTED;
+        }
     }
 
     @Override

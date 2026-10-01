@@ -53,7 +53,7 @@ public interface RoomService {
      */
     void removeRunnerFromRoom(String roomCode, String runnerId);
 
-    RoomActionResult startRace(String roomCode, String requesterName);
+    RoomActionResult startRace(String roomCode, String requester, double metaLat, double metaLon);
     boolean isRaceInProgress(String roomCode);
 
 }

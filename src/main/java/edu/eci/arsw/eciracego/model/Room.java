@@ -19,6 +19,11 @@ public class Room {
     private RoomStatus status;
     private long createdAt;
     private final Set<String> activeRunners = ConcurrentHashMap.newKeySet();
+    private String winnerId = null;
+
+    private double metaLat = 4.782800;
+    private double metaLon = -74.043000;
+    private final double RADIO_META_METROS = 15.0;
 
     public Room() {
         this.createdAt = System.currentTimeMillis();
@@ -48,6 +53,13 @@ public class Room {
         this.hostName = hostName;
     }
 
+    public double getMetaLat() { return metaLat; }
+
+    public double getMetaLon() { return metaLon; }
+
+    public double getRadioMetaMetros() { return RADIO_META_METROS; }
+
+    public synchronized String getWinnerId() { return winnerId; }
     /**
      * Sincronizado porque el estado de la sala se lee y se escribe desde
      * varios hilos a la vez (peticiones REST de start/join y el executor
@@ -125,14 +137,18 @@ public class Room {
      * WAITING. Sincronizado para que dos clics casi simultáneos del host
      * (por ejemplo doble-tap en el botón) no disparen dos transiciones.
      */
-    public synchronized boolean startRace(String requesterName) {
+    public synchronized boolean startRace(String requesterName, double mLat, double mLon) {
         if (!isHost(requesterName)) {
             return false;
         }
         if (status != RoomStatus.WAITING) {
             return false;
         }
-        status = RoomStatus.IN_PROGRESS;
+
+        this.metaLat = mLat;
+        this.metaLon = mLon;
+
+        this.status = RoomStatus.IN_PROGRESS;
         return true;
     }
 
@@ -142,5 +158,14 @@ public class Room {
         }
         status = RoomStatus.FINISHED;
         return true;
+    }
+
+    public synchronized boolean declareWinner(String runnerId) {
+        if (this.status == RoomStatus.IN_PROGRESS) {
+            this.status = RoomStatus.FINISHED;
+            this.winnerId = runnerId;
+            return true;
+        }
+        return false;
     }
 }

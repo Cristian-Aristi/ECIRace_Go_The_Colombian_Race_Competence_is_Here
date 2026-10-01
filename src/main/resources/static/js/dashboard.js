@@ -5,6 +5,74 @@ document.getElementById('roomCodeDisplay').innerText = roomCode;
 const campusCenter = [4.782800, -74.043000];
 const map = L.map('map').setView(campusCenter, 16);
 
+// --- GESTIÓN DE LA META INTERACTIVA EN EL MAPA ---
+let metaCoordenadas = [4.782800, -74.043000];
+let metaLayer = null;
+
+
+metaLayer = L.circle(metaCoordenadas, {
+    color: '#FFD700',
+    fillColor: '#FFD700',
+    fillOpacity: 0.25,
+    weight: 3,
+    dashArray: '6, 6'
+}).addTo(map);
+
+metaLayer.bindPopup("<div style='text-align:center;'><b>🏁 LÍNEA DE LLEGADA</b><br>Haz clic en el mapa para mover la meta (Solo en modo WAITING)</div>");
+
+// Variable de control para saber si el modo edición de meta está activo
+let settingMetaMode = false;
+
+const btnToggleMetaMode = document.getElementById('btnToggleMetaMode');
+const metaModeStatus = document.getElementById('metaModeStatus');
+
+// Función auxiliar para actualizar la apariencia visual del botón
+function actualizarBotonMetaUI() {
+    if (!btnToggleMetaMode || !metaModeStatus) return;
+
+    if (settingMetaMode) {
+        btnToggleMetaMode.style.borderColor = 'var(--color-amber)';
+        metaModeStatus.textContent = 'ACTIVADO (Haz clic en el mapa)';
+        metaModeStatus.style.color = 'var(--color-amber)';
+    } else {
+        btnToggleMetaMode.style.borderColor = 'var(--border-line)';
+        metaModeStatus.textContent = 'DESACTIVADO';
+        metaModeStatus.style.color = 'var(--color-alert)';
+    }
+}
+
+// 1. Evento para habilitar / deshabilitar el modo manualmente con el botón
+if (btnToggleMetaMode) {
+    btnToggleMetaMode.addEventListener('click', () => {
+        // Validación: Solo se puede cambiar la meta si la carrera está en espera
+        if (raceStatusValue && raceStatusValue.textContent !== 'WAITING') {
+            alert("⚠️ No puedes cambiar la meta una vez que la carrera ha comenzado.");
+            return;
+        }
+
+        // Alternar el estado (True a False, o False a True)
+        settingMetaMode = !settingMetaMode;
+        actualizarBotonMetaUI();
+    });
+}
+
+// 2. Evento de clic en el mapa (Solo actualiza la meta si el modo está ACTIVADO, sin apagar el botón)
+map.on('click', function(e) {
+    if (raceStatusValue && raceStatusValue.textContent === 'WAITING' && settingMetaMode) {
+        metaCoordenadas = [e.latlng.lat, e.latlng.lng];
+        metaLayer.setLatLng(metaCoordenadas); // Mueve el círculo dorado visualmente
+
+        // Notificación visual en el mapa (Popup de Leaflet)
+        L.popup()
+            .setLatLng(e.latlng)
+            .setContent("<b>🏁 ¡Meta Actualizada!</b><br>Puedes seguir haciendo clic para reubicarla o apagar el botón.")
+            .openOn(map);
+
+        // 🚀 Nota: Ya NO apagamos settingMetaMode aquí. El botón se queda activo
+        // hasta que tú decidas presionar el botón de nuevo para desactivarlo.
+    }
+});
+
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '© OpenStreetMap - ECIRace GO'
@@ -141,7 +209,11 @@ btnStartRaceDashboard.addEventListener('click', async () => {
         const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}/start`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ hostName: hostNameDeLaSala })
+            body: JSON.stringify({
+                hostName: hostNameDeLaSala,
+                metaLat: metaCoordenadas[0],
+                metaLon: metaCoordenadas[1]
+            })
         });
         if (!res.ok) throw new Error();
         log('🏁 Carrera iniciada por el host.', 'info');
