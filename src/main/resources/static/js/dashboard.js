@@ -5,10 +5,8 @@ document.getElementById('roomCodeDisplay').innerText = roomCode;
 const campusCenter = [4.782800, -74.043000];
 const map = L.map('map').setView(campusCenter, 16);
 
-// --- GESTIÓN DE LA META INTERACTIVA EN EL MAPA ---
 let metaCoordenadas = [4.782800, -74.043000];
 let metaLayer = null;
-
 
 metaLayer = L.circle(metaCoordenadas, {
     color: '#FFD700',
@@ -20,13 +18,11 @@ metaLayer = L.circle(metaCoordenadas, {
 
 metaLayer.bindPopup("<div style='text-align:center;'><b>🏁 LÍNEA DE LLEGADA</b><br>Haz clic en el mapa para mover la meta (Solo en modo WAITING)</div>");
 
-// Variable de control para saber si el modo edición de meta está activo
 let settingMetaMode = false;
 
 const btnToggleMetaMode = document.getElementById('btnToggleMetaMode');
 const metaModeStatus = document.getElementById('metaModeStatus');
 
-// Función auxiliar para actualizar la apariencia visual del botón
 function actualizarBotonMetaUI() {
     if (!btnToggleMetaMode || !metaModeStatus) return;
 
@@ -41,35 +37,36 @@ function actualizarBotonMetaUI() {
     }
 }
 
-// 1. Evento para habilitar / deshabilitar el modo manualmente con el botón
 if (btnToggleMetaMode) {
     btnToggleMetaMode.addEventListener('click', () => {
-        // Validación: Solo se puede cambiar la meta si la carrera está en espera
         if (raceStatusValue && raceStatusValue.textContent !== 'WAITING') {
             alert("⚠️ No puedes cambiar la meta una vez que la carrera ha comenzado.");
             return;
         }
-
-        // Alternar el estado (True a False, o False a True)
         settingMetaMode = !settingMetaMode;
         actualizarBotonMetaUI();
     });
 }
 
-// 2. Evento de clic en el mapa (Solo actualiza la meta si el modo está ACTIVADO, sin apagar el botón)
-map.on('click', function(e) {
+map.on('click', async function(e) {
     if (raceStatusValue && raceStatusValue.textContent === 'WAITING' && settingMetaMode) {
         metaCoordenadas = [e.latlng.lat, e.latlng.lng];
-        metaLayer.setLatLng(metaCoordenadas); // Mueve el círculo dorado visualmente
-
-        // Notificación visual en el mapa (Popup de Leaflet)
+        metaLayer.setLatLng(metaCoordenadas);
         L.popup()
             .setLatLng(e.latlng)
             .setContent("<b>🏁 ¡Meta Actualizada!</b><br>Puedes seguir haciendo clic para reubicarla o apagar el botón.")
             .openOn(map);
 
-        // 🚀 Nota: Ya NO apagamos settingMetaMode aquí. El botón se queda activo
-        // hasta que tú decidas presionar el botón de nuevo para desactivarlo.
+        try {
+            await fetch(`/api/rooms/${encodeURIComponent(roomCode)}/meta`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ lat: metaCoordenadas[0], lon: metaCoordenadas[1] })
+            });
+            log("Meta sincronizada con el servidor.", "info");
+        } catch (err) {
+            console.log("Meta actualizada localmente (el backend la tomará al iniciar).");
+        }
     }
 });
 
@@ -94,6 +91,7 @@ const corredores = {};
 let stompClient = null;
 let hostNameDeLaSala = null;
 let ultimoRosterConocido = [];
+let carreraTerminada = false;
 
 const statusDisplay = document.getElementById('status');
 const hostStatusBadge = document.getElementById('hostStatusBadge');
@@ -155,7 +153,10 @@ function actualizarMapaYLista(ubication) {
 
     if (lat === undefined || lon === undefined || !id) return;
 
-    // 🚀 Lógica de interpolación de CSS
+    if (isSuspicious) {
+        log(`🚨 [ANTI-CHEAT] ¡Comportamiento sospechoso en ${id}! Velocidad: ${speed.toFixed(1)} km/h`, 'error');
+    }
+
     const cssClass = isSuspicious ? 'car-marker-alert' : 'car-marker';
     const customIcon = L.divIcon({ className: cssClass, iconSize: [16, 16] });
 
@@ -179,6 +180,20 @@ function actualizarMapaYLista(ubication) {
             Sala: ${roomCode}
         </div>
     `);
+    if (!carreraTerminada && raceStatusValue && raceStatusValue.textContent === 'IN_PROGRESS') {
+        const distanciaAMeta = map.distance([lat, lon], metaCoordenadas);
+
+        if (distanciaAMeta <= 3.0) { // Si toca el círculo dorado (margen de 3 metros)
+            log(`🏁 ¡El radar detectó que ${id} tocó la meta! Forzando victoria...`, 'info');
+
+            aplicarEstadoDeSala({
+                status: 'FINISHED',
+                hostName: hostNameDeLaSala,
+                activeRunners: ultimoRosterConocido,
+                winnerId: id
+            });
+        }
+    }
 
     renderizarListaCorredores();
 }
@@ -192,13 +207,59 @@ async function refrescarRosterDeSala() {
     }
 }
 
+// 🚀 LÓGICA DE ESTADO COMPLETAMENTE LIMPIA Y REORGANIZADA
+// 🚀 LÓGICA DE ESTADO BLINDADA
 function aplicarEstadoDeSala(room) {
     hostNameDeLaSala = room.hostName;
+    log(`👥 Sala ${roomCode} | Estado: ${room.status}`, 'info');
+
+    // 1. EL TRUCO CLAVE: Resetear variables si la sala vuelve a espera o inicia una nueva carrera
+    if (room.status === 'WAITING' || room.status === 'IN_PROGRESS') {
+        carreraTerminada = false;
+        const oldBanner = document.getElementById('victoryBannerDash');
+        if (oldBanner) oldBanner.remove();
+    }
+
+    if (room.status === 'IN_PROGRESS') {
+        raceStatusValue.style.color = 'var(--color-teal)';
+    } else if (room.status === 'FINISHED') {
+        raceStatusValue.style.color = '#FFD700'; // Dorado
+    } else {
+        raceStatusValue.style.color = 'var(--color-amber)';
+    }
     raceStatusValue.textContent = room.status;
-    raceStatusValue.style.color = room.status === 'IN_PROGRESS' ? 'var(--color-teal)' : 'var(--color-amber)';
+
+    if (btnStartRaceDashboard) {
+        btnStartRaceDashboard.style.display = (room.status === 'WAITING') ? 'block' : 'none';
+    }
+
     ultimoRosterConocido = room.activeRunners || [];
     renderizarListaCorredores();
-    btnStartRaceDashboard.style.display = (room.status === 'WAITING') ? 'block' : 'none';
+
+    if (room.status === 'FINISHED' && !carreraTerminada) {
+        carreraTerminada = true;
+        const ganador = room.winnerId || "Ninguno";
+
+        const banner = document.createElement('div');
+        banner.id = 'victoryBannerDash';
+        banner.style.cssText = `
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+            background: linear-gradient(135deg, #FFD700, #FFA500); color: #000;
+            padding: 1.2rem 2.5rem; border-radius: 12px; font-size: 1.2rem;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.7); font-family: monospace;
+            font-weight: bold; text-align: center; z-index: 9999; border: 3px solid #fff;
+        `;
+        banner.innerHTML = `🏁 ¡CARRERA FINALIZADA! 🏁<br><span style="font-size:1rem;">🏆 GANADOR INDISCUTIBLE: <b>${ganador}</b></span>`;
+        document.body.appendChild(banner);
+
+        if (typeof map !== 'undefined' && typeof metaCoordenadas !== 'undefined') {
+            map.flyTo(metaCoordenadas, 18, { animate: true, duration: 1.5 });
+        }
+
+        setTimeout(() => {
+            alert(`🏁 ¡CARRERA FINALIZADA!\n\n🏆 GANADOR INDISCUTIBLE: ${ganador}`);
+        }, 1000);
+    }
 }
 
 btnStartRaceDashboard.addEventListener('click', async () => {

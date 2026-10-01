@@ -1,9 +1,11 @@
 const urlParams = new URLSearchParams(window.location.search);
-const runnerId = urlParams.get('player') || localStorage.getItem('ecirace_username');
+let runnerId = urlParams.get('player') || localStorage.getItem('ecirace_username');
 if (!runnerId || runnerId.trim() === '') {
     alert("Acceso denegado: Debes iniciar sesión en el Lobby antes de ingresar a la pista.");
     window.location.href = "index.html";
 }
+runnerId = runnerId.trim();
+localStorage.setItem('ecirace_username', runnerId);
 const roomCode = (urlParams.get('room') || 'CAMPUS-ECI').toUpperCase();
 document.getElementById('runnerIdDisplay').innerText = runnerId;
 document.getElementById('roomDisplay').innerText = roomCode;
@@ -45,6 +47,20 @@ const mockWaypoints = [
     { lat: 4.785300, lng: -74.044500 }
 ];
 let mockIndex = 0;
+let metaLatGlobal = null;
+let metaLonGlobal = null;
+
+function calcularDistanciaMetros(lat1, lon1, lat2, lon2) {
+    if (!lat1 || !lon1 || !lat2 || !lon2) return Infinity;
+    const R = 6371e3; // Radio de la Tierra en metros
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+}
 
 function log(msg, type = 'info') {
     const entry = document.createElement('div');
@@ -55,10 +71,16 @@ function log(msg, type = 'info') {
 }
 
 function applyGateState(status) {
+    if (status === 'WAITING' || status === 'IN_PROGRESS') {
+        const oldBanner = document.getElementById('victoryBanner');
+        if (oldBanner) oldBanner.remove();
+    }
+
     raceInProgress = (status === 'IN_PROGRESS');
     raceStateDisplay.textContent = status;
     raceStateDisplay.style.color = raceInProgress ? 'var(--color-teal)' : 'var(--color-amber)';
     raceGateCard.style.display = raceInProgress ? 'none' : 'block';
+
     const isTracking = (watchId !== null || simInterval !== null);
     btnStartGps.disabled = !raceInProgress || isTracking;
     btnToggleSim.disabled = !raceInProgress || isTracking;
@@ -70,6 +92,10 @@ async function consultarEstadoSala() {
         if (res.ok) {
             const room = await res.json();
             applyGateState(room.status);
+            if (room.metaLat && room.metaLon) {
+                metaLatGlobal = room.metaLat;
+                metaLonGlobal = room.metaLon;
+            }
         } else {
             applyGateState('WAITING');
         }
@@ -89,11 +115,31 @@ function conectarWebSocket() {
             wsStatusDisplay.style.color = "var(--color-teal)";
         }
         log(`Conexión WebSocket establecida para sala ${roomCode}.`, "info");
+
         stompClient.subscribe(`/topic/rooms/${roomCode}/status`, (msg) => {
             const room = JSON.parse(msg.body);
+            if (room.metaLat && room.metaLon) {
+                metaLatGlobal = room.metaLat;
+                metaLonGlobal = room.metaLon;
+            }
             applyGateState(room.status);
+
+            log(`👥 Estado actualizado de la sala: ${room.status}`, 'info');
+
             if (room.status === 'IN_PROGRESS') {
                 log('🏁 ¡El host inició la carrera! GPS habilitado.', 'info');
+            }
+            else if (room.status === 'FINISHED') {
+                log(`🏁 ¡Carrera finalizada! Ganador: ${room.winnerId}`, 'info');
+
+                if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+                if (simInterval !== null) { clearInterval(simInterval); simInterval = null; }
+                detenerTransmisionContinua();
+
+                const soyElGanador = room.winnerId && room.winnerId.trim().toLowerCase() === runnerId.trim().toLowerCase();
+                mostrarNotificacionVictoria(room.winnerId, soyElGanador);
+
+                localStorage.removeItem('ecirace_username');
             }
         });
     }, function () {
@@ -139,7 +185,7 @@ function updateUI(lat, lng, acc, speed, source) {
     hudStatus.textContent = "GPS ACTIVO";
     hudStatus.style.color = "var(--color-teal)";
     sourceBadge.textContent = source;
-    sourceBadge.style.color = source === 'GPS_SIMULADOR' ? 'var(--color-amber)' : 'var(--color-teal)';
+    sourceBadge.style.color = source.includes('SIMULA') ? 'var(--color-amber)' : 'var(--color-teal)';
     latDisplay.textContent = lat.toFixed(6);
     lngDisplay.textContent = lng.toFixed(6);
     accDisplay.textContent = acc ? `± ${acc} m` : 'N/A';
@@ -225,6 +271,102 @@ btnToggleSim.addEventListener('click', () => {
         iniciarTransmisionContinua();
     }
 });
+// --- SIMULADOR DE VICTORIA DEFINITIVO ---
+const btnSimulateWin = document.getElementById('btnSimulateWin');
+
+if (btnSimulateWin) {
+    btnSimulateWin.addEventListener('click', async () => {
+        if (!raceInProgress) {
+            alert("⚠️ ERROR: El host debe Iniciar la Carrera primero desde el Dashboard.");
+            return;
+        }
+
+        try {
+            let targetLat = 4.782800;
+            let targetLon = -74.043000;
+
+            try {
+                const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}`);
+                if (res.ok) {
+                    const room = await res.json();
+                    if (room.metaLat && room.metaLon) {
+                        targetLat = room.metaLat;
+                        targetLon = room.metaLon;
+                    }
+                }
+            } catch (err) {}
+
+            btnSimulateWin.disabled = true;
+            btnSimulateWin.textContent = "⏳ Posicionando...";
+            if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+            if (simInterval !== null) { clearInterval(simInterval); simInterval = null; }
+            detenerTransmisionContinua();
+            if (window.simPathInterval) clearInterval(window.simPathInterval);
+
+            let startLat = targetLat - 0.0001;
+            let startLon = targetLon - 0.0001;
+
+            const primerPayload = {
+                corredorId: runnerId, runnerId: runnerId,
+                latitud: startLat, latitude: startLat,
+                longitud: startLon, longitude: startLon,
+                roomCode: roomCode, timestamp: Date.now()
+            };
+            if (stompClient && stompClient.connected) {
+                stompClient.send("/app/telemetry", {}, JSON.stringify(primerPayload));
+            }
+            updateUI(startLat, startLon, 1, 0, 'ENFRIANDO RADAR...');
+
+            setTimeout(() => {
+                btnSimulateWin.textContent = "🏁 Trotando a la meta (11 km/h)...";
+
+                let steps = 20;
+                let currentStep = 0;
+
+                window.simPathInterval = setInterval(() => {
+                    currentStep++;
+                    let fraction = currentStep / steps;
+
+                    let lat = startLat + (targetLat - startLat) * fraction;
+                    let lon = startLon + (targetLon - startLon) * fraction;
+
+                    if (currentStep >= steps) {
+                        lat = targetLat;
+                        lon = targetLon;
+                    }
+
+                    updateUI(lat, lon, 2, 11.3, 'SIMULACION_LEGAL');
+
+                    stompClient.send("/app/telemetry", {}, JSON.stringify({
+                        corredorId: runnerId, runnerId: runnerId,
+                        latitud: lat, latitude: lat,
+                        longitud: lon, longitude: lon,
+                        roomCode: roomCode, timestamp: Date.now()
+                    }));
+
+                    if (currentStep >= steps) {
+                        clearInterval(window.simPathInterval);
+                        btnSimulateWin.textContent = "🏆 Línea cruzada exacta";
+
+
+                        setTimeout(() => {
+                            if (raceStateDisplay.textContent !== 'FINISHED') {
+                                raceStateDisplay.textContent = 'FINISHED';
+                                raceStateDisplay.style.color = '#FFD700';
+                                mostrarNotificacionVictoria(runnerId, true);
+                            }
+                        }, 500);
+                    }
+                }, 250);
+            }, 2000);
+
+        } catch (e) {
+            console.error(e);
+            btnSimulateWin.disabled = false;
+            btnSimulateWin.textContent = "🏁 Simular Victoria";
+        }
+    });
+}
 
 conectarWebSocket();
 consultarEstadoSala();
