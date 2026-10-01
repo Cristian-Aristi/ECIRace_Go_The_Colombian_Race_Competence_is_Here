@@ -242,7 +242,7 @@
                 if (packetsCountDisplay) packetsCountDisplay.innerText = packetsSent;
                 log(`📤 Telemetría enviada a sala [${roomCode}]: Lat ${payload.latitude.toFixed(5)}, Lng ${payload.longitude.toFixed(5)}`, 'info');
             }
-        }, 1500);
+        }, 300);
     }
 
     function detenerTransmisionContinua() {
@@ -347,7 +347,7 @@
                 const simulatedSpeed = 12.0 + Math.random() * 4.0;
                 updateUI(wp.lat + jitter, wp.lng + jitter, 5, simulatedSpeed, 'GPS_SIMULADOR');
                 mockIndex = (mockIndex + 1) % mockWaypoints.length;
-            }, 1500);
+            }, 300);
 
             iniciarTransmisionContinua();
         }
