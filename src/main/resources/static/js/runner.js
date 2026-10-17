@@ -180,6 +180,21 @@ function detenerTransmisionContinua() {
     }
 }
 
+let metaLatGlobal = null;
+let metaLonGlobal = null;
+
+function calcularDistanciaMetros(lat1, lon1, lat2, lon2) {
+    if (!lat1 || !lon1 || !lat2 || !lon2) return Infinity;
+    const R = 6371e3;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+}
+
 function updateUI(lat, lng, acc, speed, source) {
     currentPosition = { lat, lng };
     hudStatus.textContent = "GPS ACTIVO";
@@ -191,6 +206,24 @@ function updateUI(lat, lng, acc, speed, source) {
     accDisplay.textContent = acc ? `± ${acc} m` : 'N/A';
     speedDisplay.textContent = speed.toFixed(1);
     timeDisplay.textContent = new Date().toLocaleTimeString();
+
+    if (raceInProgress && metaLatGlobal && metaLonGlobal) {
+        const distancia = calcularDistanciaMetros(lat, lng, metaLatGlobal, metaLonGlobal);
+
+        if (distancia <= 15.0 && raceStateDisplay.textContent !== 'FINISHED') {
+            log(`🏁 ¡Radar a bordo detectó la meta a ${distancia.toFixed(1)} metros!`, 'info');
+
+            raceInProgress = false;
+            if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+            if (simInterval !== null) { clearInterval(simInterval); simInterval = null; }
+            if (window.simPathInterval) { clearInterval(window.simPathInterval); window.simPathInterval = null; }
+            detenerTransmisionContinua();
+
+            raceStateDisplay.textContent = 'FINISHED';
+            raceStateDisplay.style.color = '#FFD700';
+            mostrarNotificacionVictoria(runnerId, true);
+        }
+    }
 }
 
 btnStartGps.addEventListener('click', () => {

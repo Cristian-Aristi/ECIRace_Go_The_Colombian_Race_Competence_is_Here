@@ -183,7 +183,7 @@ function actualizarMapaYLista(ubication) {
     if (!carreraTerminada && raceStatusValue && raceStatusValue.textContent === 'IN_PROGRESS') {
         const distanciaAMeta = map.distance([lat, lon], metaCoordenadas);
 
-        if (distanciaAMeta <= 3.0) { // Si toca el círculo dorado (margen de 3 metros)
+        if (distanciaAMeta <= 15.0) { // Si toca el círculo dorado (margen de 3 metros)
             log(`🏁 ¡El radar detectó que ${id} tocó la meta! Forzando victoria...`, 'info');
 
             aplicarEstadoDeSala({
