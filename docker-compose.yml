@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  ecirace-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ecirace-central-server
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+    restart: unless-stopped

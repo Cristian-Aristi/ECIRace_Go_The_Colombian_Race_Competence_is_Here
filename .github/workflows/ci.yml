@@ -1,0 +1,28 @@
+name: ECIRace GO - CI Server Pipeline
+
+on:
+  push:
+    branches: [ "main", "sprint2" ]
+  pull_request:
+    branches: [ "main", "sprint2" ]
+
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Código Fuente
+        uses: actions/checkout@v4
+
+      - name: Configurar JDK 21 (Eclipse Temurin)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Compilar y Ejecutar Pruebas de Anti-Cheat y Concurrencia
+        run: mvn clean test
+
+      - name: Empaquetar Artefacto JAR
+        run: mvn package -DskipTests

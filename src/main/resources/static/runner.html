@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ECIRace GO - CLIENT_PLAYER</title>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<header>
+    <div class="brand">
+        <a href="lobby.html" style="text-decoration: none; color: inherit; display: flex; align-items: center; gap: 0.5rem;" title="Volver al Lobby">
+            <span>🏁 ECIRace GO</span>
+        </a>
+        <span style="font-size: 0.85rem; color: var(--text-muted); font-weight: normal;">| CLIENT_PLAYER</span>
+    </div>
+    <div style="display: flex; gap: 0.5rem; align-items: center;">
+        <a href="lobby.html" class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; text-decoration: none; display: inline-block;">🏠 LOBBY</a>
+        <div class="hud-badge" id="hudStatus">STANDBY</div>
+    </div>
+</header>
+
+<main class="main-container">
+
+    <section class="card" id="raceGateCard" style="display:none; border-color: var(--color-amber);">
+        <div class="card-header">
+            <span class="card-title">🚦 Esperando Señal de Largada</span>
+        </div>
+        <p style="font-size: 0.85rem; color: var(--text-muted);">
+            El host de la sala <strong id="gateRoomCode">--</strong> aún no ha iniciado la carrera.
+            No podrás transmitir tu GPS hasta que él presione "Iniciar Carrera" en el lobby.
+        </p>
+    </section>
+
+    <section class="card">
+        <div class="card-header">
+            <span class="card-title">Identificación del Corredor</span>
+            <span class="hud-badge" id="sourceBadge">HARDWARE GPS</span>
+        </div>
+        <div style="font-family: monospace; font-size: 1.1rem; color: var(--color-amber);">
+            ID: <strong id="runnerIdDisplay">Cargando...</strong>
+        </div>
+        <div class="telemetry-row">
+            <span class="telemetry-label">Sala de Carrera:</span>
+            <span class="telemetry-value" id="roomDisplay" style="color: var(--color-teal); font-weight: bold;">--</span>
+        </div>
+        <div class="telemetry-row">
+            <span class="telemetry-label">Estado de la Carrera:</span>
+            <span class="telemetry-value" id="raceStateDisplay" style="color: var(--color-amber);">CONSULTANDO...</span>
+        </div>
+        <div class="telemetry-row">
+            <span class="telemetry-label">Canal WebSocket:</span>
+            <span class="telemetry-value" id="wsStatusDisplay" style="color: var(--color-amber);">CONECTANDO...</span>
+        </div>
+        <div class="telemetry-row">
+            <span class="telemetry-label">Paquetes Transmitidos (1.5s):</span>
+            <span class="telemetry-value" id="packetsCountDisplay">0</span>
+        </div>
+    </section>
+
+    <section class="card">
+        <div class="gauge-container">
+            <div class="speedometer-circle">
+                <div class="speed-value" id="speedDisplay">0.0</div>
+                <div class="speed-unit">KM / H</div>
+            </div>
+        </div>
+
+        <div class="card" style="background-color: var(--bg-panel2); margin-top: 1rem;">
+            <div class="telemetry-row">
+                <span class="telemetry-label">Latitud:</span>
+                <span class="telemetry-value" id="latDisplay">--.------</span>
+            </div>
+            <div class="telemetry-row">
+                <span class="telemetry-label">Longitud:</span>
+                <span class="telemetry-value" id="lngDisplay">--.------</span>
+            </div>
+            <div class="telemetry-row">
+                <span class="telemetry-label">Precisión GPS:</span>
+                <span class="telemetry-value" id="accDisplay">-- m</span>
+            </div>
+            <div class="telemetry-row">
+                <span class="telemetry-label">Hora de Captura:</span>
+                <span class="telemetry-value" id="timeDisplay">--:--:--</span>
+            </div>
+        </div>
+    </section>
+
+    <section class="card">
+        <div class="grid-2">
+            <button type="button" id="btnStartGps" class="btn btn-primary" disabled>📡 Iniciar GPS Real</button>
+            <button type="button" id="btnStopGps" class="btn btn-danger" disabled>🛑 Detener Rastreo</button>
+        </div>
+        <div style="margin-top: 0.75rem;">
+            <button type="button" id="btnToggleSim" class="btn btn-secondary" disabled>🎮 Activar Simulador de Ruta (Campus ECI)</button>
+        </div>
+        <div style="margin-top: 1rem; border-top: 1px dashed var(--border-line); padding-top: 1rem;">
+            <button type="button" id="btnSimulateWin" class="btn" style="background: linear-gradient(135deg, #FFD700, #FFA500); color: #000; font-weight: bold; width: 100%;">
+                🏁 Simular Victoria (Teletransporte a Meta)
+            </button>
+        </div>
+    </section>
+
+    <section class="card">
+        <div class="card-header">
+            <span class="card-title">Registro de Sensor</span>
+        </div>
+        <div class="log-box" id="eventLog">
+            <div class="log-entry info">[CLIENT_PLAYER] Módulo de geolocalización cargado.</div>
+        </div>
+    </section>
+</main>
+<script src="js/runner.js"></script>
+</body>
+</html>

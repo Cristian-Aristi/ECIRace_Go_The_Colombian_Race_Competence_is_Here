@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ECIRace GO - Lobby de Competición</title>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <style>
+        .room-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            background-color: var(--bg-panel2);
+            border: 1px solid var(--border-line);
+            padding: 0.35rem 0.75rem;
+            border-radius: 999px;
+            font-size: 0.8rem;
+            font-family: monospace;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: var(--text-paper);
+        }
+        .room-pill:hover, .room-pill.active {
+            border-color: var(--color-amber);
+            background-color: rgba(232, 163, 61, 0.15);
+            color: var(--color-amber);
+        }
+        .room-pill.full {
+            opacity: 0.4;
+            cursor: not-allowed;
+            border-color: var(--color-alert);
+        }
+        .room-pill.started {
+            opacity: 0.4;
+            cursor: not-allowed;
+            border-style: dashed;
+        }
+        .roster-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            background-color: var(--bg-panel2);
+            border: 1px solid var(--border-line);
+            border-radius: 0.5rem;
+            font-family: monospace;
+            font-size: 0.85rem;
+        }
+        .roster-item.is-host {
+            border-color: var(--color-amber);
+            color: var(--color-amber);
+        }
+        .roster-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 0.5rem;
+            margin: 0.75rem 0 1rem 0;
+        }
+        .capacity-bar {
+            width: 100%;
+            height: 8px;
+            background-color: var(--bg-panel2);
+            border-radius: 999px;
+            overflow: hidden;
+            border: 1px solid var(--border-line);
+            margin-top: 0.35rem;
+        }
+        .capacity-bar-fill {
+            height: 100%;
+            background-color: var(--color-teal);
+            transition: width 0.3s ease;
+        }
+        .capacity-bar-fill.full {
+            background-color: var(--color-alert);
+        }
+        .waiting-pulse {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--color-amber);
+            margin-right: 0.4rem;
+            animation: pulse 1.4s infinite ease-in-out;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+        }
+        .tag-input-row {
+            display: flex;
+            gap: 0.5rem;
+        }
+        .tag-input-row .input-text {
+            flex: 1;
+        }
+    </style>
+</head>
+<body>
+<header>
+    <div class="brand">
+        <a href="index.html" style="text-decoration: none; color: inherit; display: flex; align-items: center; gap: 0.5rem;" title="Volver al Portal">
+            <span>🏁 ECIRace GO</span>
+        </a>
+        <span style="font-size: 0.85rem; color: var(--text-muted); font-weight: normal;">| LOBBY & RACER PROFILE</span>
+    </div>
+    <div style="display: flex; gap: 0.5rem; align-items: center;">
+        <button type="button" class="btn btn-secondary" id="btnLogout" style="padding: 0.25rem 0.6rem; font-size: 0.75rem; width: auto;" title="Cerrar sesión">
+            🚪 Salir
+        </button>
+        <div class="hud-badge" id="hudStatus">PILOT ONLINE</div>
+    </div>
+</header>
+
+<main class="main-container">
+
+    <section class="card">
+        <div class="card-header">
+            <span class="card-title">Perfil del Corredor</span>
+            <span class="hud-badge" id="sourceBadge" style="color: var(--color-amber); border-color: var(--color-amber);">PILOT HUD</span>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 1.25rem; margin-bottom: 1.25rem;">
+            <div class="pilot-avatar-container" id="avatarContainer">
+                <svg class="pilot-avatar-svg" width="58" height="58" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="16" y="8" width="32" height="40" rx="14" fill="#282d37" />
+                    <rect x="28" y="8" width="8" height="20" fill="#e8a33d" />
+                    <rect x="29" y="8" width="6" height="20" fill="#ffd068" />
+                    <rect x="18" y="24" width="28" height="12" rx="4" fill="#0d1117" />
+                    <rect x="20" y="26" width="10" height="3" rx="1.5" fill="#3fa796" opacity="0.7" />
+                    <rect x="24" y="37" width="16" height="8" rx="2" fill="#e0ac69" />
+                    <rect x="28" y="41" width="8" height="2" fill="#8c5832" />
+                    <path d="M12 56 C16 48, 48 48, 52 56 Z" fill="#1b1f24" />
+                    <rect x="26" y="47" width="12" height="7" fill="#e8a33d" />
+                    <rect x="15" y="7" width="34" height="42" rx="15" stroke="#e8a33d" stroke-width="2" />
+                </svg>
+            </div>
+
+            <div style="flex: 1;">
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <span id="pilotNameDisplay" style="font-size: 1.5rem; font-weight: 700; color: var(--color-amber);">Cargando...</span>
+                    <span style="color: var(--color-amber); font-size: 1.2rem;">★</span>
+                </div>
+                <div style="font-size: 0.85rem; color: var(--text-muted); font-family: monospace;" id="pilotEmailDisplay">
+                    cargando perfil...
+                </div>
+            </div>
+
+            <button type="button" class="btn btn-secondary" id="btnChangeNick" style="width: auto; padding: 0.45rem 0.9rem; font-size: 0.8rem;">
+                ✏️ Cambiar Tag
+            </button>
+        </div>
+
+        <div class="card" style="background-color: var(--bg-panel2); padding: 0.75rem 1rem;">
+            <div class="telemetry-row">
+                <span class="telemetry-label">Carreras Disputadas (RACES):</span>
+                <span class="telemetry-value" id="racesDisplay" style="color: var(--color-amber); font-weight: bold;">0</span>
+            </div>
+            <div class="telemetry-row">
+                <span class="telemetry-label">Victorias Oficiales (WINS):</span>
+                <span class="telemetry-value" id="winsDisplay" style="color: var(--color-teal); font-weight: bold;">0</span>
+            </div>
+            <div class="telemetry-row">
+                <span class="telemetry-label">Efectividad en Pista:</span>
+                <span class="telemetry-value" id="winRateDisplay">0.0%</span>
+            </div>
+            <div class="telemetry-row">
+                <span class="telemetry-label">Rango de Piloto:</span>
+                <span class="telemetry-value" id="rankBadge" style="color: var(--color-amber);">★ (ROOKIE)</span>
+            </div>
+
+            <div style="margin-top: 1.25rem; border-top: 1px dashed var(--border-line); padding-top: 1rem;">
+                <label style="display:block; font-size: 0.85rem; font-weight: 600; color: var(--color-amber); margin-bottom: 0.6rem; font-family: monospace;">
+                    SELECT VEHICLE:
+                </label>
+                <div style="display: flex; gap: 0.6rem; flex-wrap: wrap;">
+                    <button type="button" class="vehicle-btn" id="btn-RENAULT_4" onclick="selectVehicle('RENAULT_4')">
+                        Renault 4
+                    </button>
+                    <button type="button" class="vehicle-btn" id="btn-CHEVROLET_SPARK" onclick="selectVehicle('CHEVROLET_SPARK')">
+                        Spark GT
+                    </button>
+                    <button type="button" class="vehicle-btn" id="btn-MAZDA_323" onclick="selectVehicle('MAZDA_323')">
+                        Mazda 323
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </section>
+
+    <!-- ===================== CREAR SALA (código elegido por el usuario, NO random) ===================== -->
+    <section class="card" id="createRoomSection">
+        <div class="card-header">
+            <span class="card-title">Crear Nueva Sala</span>
+            <span class="hud-badge" style="color: var(--color-teal); border-color: var(--color-teal);">HOST</span>
+        </div>
+        <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+            Ponle el nombre que quieras a tu sala (máx. 16 caracteres). Serás el <strong>host</strong>: solo tú podrás iniciar la carrera. Cupo máximo: <strong>6 pilotos</strong>.
+        </p>
+        <div class="tag-input-row" style="margin-bottom: 0.75rem;">
+            <input
+                    type="text"
+                    id="createRoomInput"
+                    class="input-text"
+                    placeholder="Ej. CIRCUITO-NORTE o el nombre que quieras"
+                    maxlength="16"
+                    autocomplete="off"
+                    spellcheck="false"
+            />
+            <button type="button" id="btnCreateRoom" class="btn btn-primary" style="width: auto; padding: 0 1.1rem;">
+                🆕 Crear
+            </button>
+        </div>
+        <div id="createRoomError" style="display:none; font-size: 0.8rem; color: var(--color-alert); margin-top: -0.4rem; margin-bottom: 0.5rem;"></div>
+    </section>
+
+    <!-- ===================== UNIRSE A SALA EXISTENTE ===================== -->
+    <section class="card">
+        <div class="card-header">
+            <span class="card-title">Unirse a Sala de Competición</span>
+            <span class="hud-badge" style="color: var(--color-amber); border-color: var(--color-amber);">MULTIPLAYER</span>
+        </div>
+
+        <div style="margin-bottom: 1rem;">
+            <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; font-family: monospace;">
+                CÓDIGO DE SALA (ENTER ROOM CODE):
+            </label>
+            <input
+                    type="text"
+                    id="roomInput"
+                    class="input-text"
+                    placeholder="e.g., ECI-2026 o CAMPUS-ECI"
+                    value="CAMPUS-ECI"
+                    maxlength="16"
+                    autocomplete="off"
+                    spellcheck="false"
+            />
+        </div>
+
+        <div style="margin-bottom: 1.25rem;">
+            <span style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.4rem; font-family: monospace;">
+                SALAS ACTIVAS EN EL SERVIDOR (TOCA PARA SELECCIONAR):
+            </span>
+            <div id="activeRoomsContainer" style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                <span class="room-pill active" onclick="selectRoom('CAMPUS-ECI')">🏁 CAMPUS-ECI</span>
+            </div>
+        </div>
+
+        <button type="button" id="btnJoinRace" class="btn btn-primary" style="font-size: 1.15rem; padding: 1rem; font-weight: 700;">
+            🏎️ JOIN RACE ▶
+        </button>
+        <div id="joinRoomError" style="display:none; font-size: 0.8rem; color: var(--color-alert); margin-top: 0.5rem;"></div>
+    </section>
+
+    <!-- ===================== SALA DE ESPERA (roster + control del host) ===================== -->
+    <section class="card" id="waitingRoomSection" style="display:none;">
+        <div class="card-header">
+            <span class="card-title">Sala de Espera: <span id="currentRoomCodeLabel" style="color: var(--color-amber);">--</span></span>
+            <span class="hud-badge" id="raceStatusBadge">WAITING</span>
+        </div>
+
+        <div style="font-size: 0.8rem; color: var(--text-muted);">
+            Pilotos conectados: <strong id="rosterCountLabel">0 / 6</strong>
+        </div>
+        <div class="capacity-bar">
+            <div class="capacity-bar-fill" id="capacityBarFill" style="width: 0%;"></div>
+        </div>
+
+        <div class="roster-grid" id="rosterGrid"></div>
+
+        <div id="hostControls" style="display:none;">
+            <button type="button" id="btnStartRace" class="btn btn-primary" style="font-size: 1.1rem; padding: 0.95rem; font-weight: 700;">
+                🚀 INICIAR CARRERA
+            </button>
+            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem; text-align: center;">
+                Como host, tú decides cuándo empieza. Los demás pilotos no pueden iniciar la carrera.
+            </div>
+        </div>
+
+        <div id="guestWaitingMsg" style="display:none; text-align: center; padding: 0.75rem; color: var(--color-amber); font-family: monospace; font-size: 0.85rem;">
+            <span class="waiting-pulse"></span> Esperando a que el host inicie la carrera...
+        </div>
+
+        <button type="button" class="btn btn-secondary" id="btnLeaveWaitingRoom" style="margin-top: 0.75rem;">
+            ↩️ Salir de la sala
+        </button>
+    </section>
+
+    <section class="card" style="background-color: var(--bg-panel2);">
+        <div class="grid-2" style="margin-bottom: 0.75rem;">
+            <button type="button" class="btn btn-secondary" id="btnGoDashboard" style="text-decoration: none;">
+                🗺️ Ver Tablero de Esta Sala
+            </button>
+            <button type="button" class="btn btn-secondary" id="btnLeaderboard">
+                🏆 Tabla de Clasificación
+            </button>
+        </div>
+        <button type="button" class="btn btn-secondary" id="btnSettings">
+            ⚙️ Ajustes de Telemetría y Audio
+        </button>
+    </section>
+
+</main>
+
+<div class="modal-backdrop" id="changeTagModal" style="display: none;">
+    <div class="modal-content">
+        <div class="card-header">
+            <span class="card-title">Modificar Tag de Piloto</span>
+            <button type="button" id="btnCloseTagModal" style="background: none; border: none; color: var(--text-muted); font-size: 1.25rem; cursor: pointer;">✕</button>
+        </div>
+        <p style="font-size: 0.85rem; color: var(--text-muted);">
+            Ingresa tu nuevo apodo de piloto. Se conservarán tus estadísticas de carrera:
+        </p>
+        <input
+                type="text"
+                id="newTagInput"
+                class="input-text"
+                placeholder="Nuevo nombre"
+                maxlength="16"
+        />
+        <div class="grid-2">
+            <button type="button" class="btn btn-primary" id="btnSaveTag">
+                💾 Actualizar Tag
+            </button>
+            <button type="button" class="btn btn-secondary" id="btnCancelTag">
+                Cancelar
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="modal-backdrop" id="leaderboardModal" style="display: none;">
+    <div class="modal-content">
+        <div class="card-header">
+            <span class="card-title">🏆 Tabla de Clasificación</span>
+            <button type="button" id="btnCloseLeaderboard" style="background: none; border: none; color: var(--text-muted); font-size: 1.25rem; cursor: pointer;">✕</button>
+        </div>
+        <div class="card" style="background-color: var(--bg-panel2); padding: 0.5rem 1rem;">
+            <div class="telemetry-row" style="font-weight: bold; color: var(--color-amber);">
+                <span># PILOTO</span>
+                <span>VICTORIAS / CARRERAS</span>
+            </div>
+            <div class="telemetry-row">
+                <span>🥇 Daniel</span>
+                <span style="color: var(--color-teal);">48 / 125 (38.4%)</span>
+            </div>
+            <div class="telemetry-row">
+                <span>🥈 Cristian</span>
+                <span style="color: var(--color-teal);">48 / 125 (38.4%)</span>
+            </div>
+            <div class="telemetry-row">
+                <span>🥉 Santiago</span>
+                <span style="color: var(--color-teal);">48 / 125 (38.4%)</span>
+            </div>
+            <div class="telemetry-row" id="myRankRow" style="color: var(--color-amber);">
+                <span id="myRankName">Tu Piloto</span>
+                <span id="myRankStats">--</span>
+            </div>
+        </div>
+        <button type="button" class="btn btn-secondary" id="btnDoneLeaderboard">
+            Entendido
+        </button>
+    </div>
+</div>
+
+<div class="modal-backdrop" id="settingsModal" style="display: none;">
+    <div class="modal-content">
+        <div class="card-header">
+            <span class="card-title">⚙️ Ajustes de Telemetría</span>
+            <button type="button" id="btnCloseSettings" style="background: none; border: none; color: var(--text-muted); font-size: 1.25rem; cursor: pointer;">✕</button>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+            <label style="display: flex; align-items: center; gap: 0.75rem; font-size: 0.85rem; cursor: pointer;">
+                <input type="checkbox" id="chkHighAccuracy" checked style="accent-color: var(--color-amber);">
+                <span>Activar Alta Precisión GPS (enableHighAccuracy)</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 0.75rem; font-size: 0.85rem; cursor: pointer;">
+                <input type="checkbox" id="chkAudioAlerts" checked style="accent-color: var(--color-amber);">
+                <span>Alertas sonoras del Anti-Cheat</span>
+            </label>
+        </div>
+        <button type="button" class="btn btn-primary" id="btnSaveSettings">
+            💾 Guardar Preferencias
+        </button>
+    </div>
+</div>
+<script src="js/lobby.js"></script>
+</body>
+</html>
