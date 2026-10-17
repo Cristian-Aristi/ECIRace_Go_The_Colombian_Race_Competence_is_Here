@@ -110,7 +110,10 @@ function log(msg, type = 'info') {
 }
 
 function conectarWebSocket() {
-    const socket = new SockJS('/race-ws');
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+    const wsUrl = wsProtocol + window.location.host + '/race-ws-native';
+
+    const socket = new WebSocket(wsUrl);
     stompClient = Stomp.over(socket);
     stompClient.debug = null;
 

@@ -88,14 +88,15 @@ function applyGateState(status) {
 
 async function consultarEstadoSala() {
     try {
-        const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}`);
+        const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}`, {
+            headers: {
+                'ngrok-skip-browser-warning': 'true', // 🚀 Bypass de seguridad para Ngrok
+                'Accept': 'application/json'
+            }
+        });
         if (res.ok) {
             const room = await res.json();
             applyGateState(room.status);
-            if (room.metaLat && room.metaLon) {
-                metaLatGlobal = room.metaLat;
-                metaLonGlobal = room.metaLon;
-            }
         } else {
             applyGateState('WAITING');
         }
@@ -105,9 +106,13 @@ async function consultarEstadoSala() {
 }
 
 function conectarWebSocket() {
-    const socket = new SockJS('/race-ws');
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+    const wsUrl = wsProtocol + window.location.host + '/race-ws-native';
+
+    const socket = new WebSocket(wsUrl);
     stompClient = Stomp.over(socket);
     stompClient.debug = null;
+
     stompClient.connect({}, function () {
         isWsConnected = true;
         if (wsStatusDisplay) {

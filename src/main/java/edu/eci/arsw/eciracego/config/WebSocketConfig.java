@@ -18,8 +18,13 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
+        // 1. Endpoint clásico (con SockJS, útil para localhost)
         registry.addEndpoint("/race-ws")
                 .setAllowedOriginPatterns("*")
                 .withSockJS();
+
+        // 2. 🚀 NUEVO ENDPOINT NATIVO (Sin SockJS, indispensable para Ngrok)
+        registry.addEndpoint("/race-ws-native")
+                .setAllowedOriginPatterns("*");
     }
 }
