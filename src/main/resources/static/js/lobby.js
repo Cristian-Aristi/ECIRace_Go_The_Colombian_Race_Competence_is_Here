@@ -401,7 +401,8 @@ cargarSalasActivas();
 setInterval(cargarSalasActivas, 5000);
 
 if (preselectedRoom) {
-    enterWaitingRoom(preselectedRoom.toUpperCase());
+    // Registrar al piloto en la sala (join) antes de entrar a la sala de espera
+    btnJoinRace.click();
 }
 
 const currentVehicle = localStorage.getItem('ecirace_vehicle') || 'RENAULT_4';

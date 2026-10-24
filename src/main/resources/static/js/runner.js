@@ -185,9 +185,6 @@ function detenerTransmisionContinua() {
     }
 }
 
-let metaLatGlobal = null;
-let metaLonGlobal = null;
-
 function calcularDistanciaMetros(lat1, lon1, lat2, lon2) {
     if (!lat1 || !lon1 || !lat2 || !lon2) return Infinity;
     const R = 6371e3;
