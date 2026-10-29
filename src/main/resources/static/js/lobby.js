@@ -3,13 +3,26 @@
 const urlParams = new URLSearchParams(window.location.search);
 const preselectedRoom = urlParams.get('room');
 
-const activePilot = localStorage.getItem('ecirace_username');
+// 🚀 Helpers blindados contra bloqueos de Safari / Modo Incógnito
+function safeGetStorage(key) {
+    try { return localStorage.getItem(key); } catch (e) { return null; }
+}
+function safeSetStorage(key, value) {
+    try { localStorage.setItem(key, value); } catch (e) {}
+}
+function safeRemoveStorage(key) {
+    try { localStorage.removeItem(key); } catch (e) {}
+}
+
+const activePilot = urlParams.get('player') || safeGetStorage('ecirace_username');
 if (!activePilot || activePilot.trim() === "") {
     alert("Acceso denegado: Debes iniciar sesión o ingresar tu nombre de piloto primero.");
     const redirectTarget = preselectedRoom
         ? `index.html?room=${encodeURIComponent(preselectedRoom)}`
         : "index.html";
     window.location.href = redirectTarget;
+} else {
+    safeSetStorage('ecirace_username', activePilot.trim());
 }
 
 const pilotNameDisplay = document.getElementById('pilotNameDisplay');
@@ -47,7 +60,10 @@ let roomPollInterval = null;
 let stompClient = null;
 let redirecting = false;
 
-if (preselectedRoom) {
+// 🚀 Variable en memoria para garantizar que el carro elegido nunca se pierda
+let selectedVehicleMemory = safeGetStorage('ecirace_vehicle') || safeGetStorage('ecirace_car') || 'RENAULT_4';
+
+if (preselectedRoom && roomInput) {
     roomInput.value = preselectedRoom.toUpperCase();
 }
 
@@ -59,11 +75,14 @@ window.selectRoom = function(code) {
     });
 };
 
-// Expone la función globalmente para el atributo onclick del vehículo
+// 🚀 Guarda el carro tanto en memoria como en las dos llaves de localStorage
 window.selectVehicle = function(vehicleType) {
-    localStorage.setItem('ecirace_vehicle', vehicleType);
+    selectedVehicleMemory = (vehicleType && vehicleType.trim() !== '') ? vehicleType.trim() : 'RENAULT_4';
+    safeSetStorage('ecirace_vehicle', selectedVehicleMemory);
+    safeSetStorage('ecirace_car', selectedVehicleMemory);
+
     document.querySelectorAll('.vehicle-btn').forEach(btn => btn.classList.remove('active'));
-    const activeBtn = document.getElementById('btn-' + vehicleType);
+    const activeBtn = document.getElementById('btn-' + selectedVehicleMemory);
     if (activeBtn) {
         activeBtn.classList.add('active');
     }
@@ -71,7 +90,12 @@ window.selectVehicle = function(vehicleType) {
 
 async function cargarSalasActivas() {
     try {
-        const res = await fetch('/api/rooms');
+        const res = await fetch('/api/rooms', {
+            headers: {
+                'ngrok-skip-browser-warning': 'true',
+                'Accept': 'application/json'
+            }
+        });
         if (res.ok) {
             const rooms = await res.json();
             if (rooms && rooms.length > 0) {
@@ -99,14 +123,22 @@ async function cargarSalasActivas() {
 async function cargarPerfil(username) {
     pilotNameDisplay.textContent = username;
     try {
-        const res = await fetch(`/api/auth/profile/${encodeURIComponent(username)}`);
+        const res = await fetch(`/api/auth/profile/${encodeURIComponent(username)}`, {
+            headers: {
+                'ngrok-skip-browser-warning': 'true',
+                'Accept': 'application/json'
+            }
+        });
         if (res.ok) {
             const profile = await res.json();
             renderizarPerfil(profile);
         } else {
             const initRes = await fetch('/api/auth/guest', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'ngrok-skip-browser-warning': 'true'
+                },
                 body: JSON.stringify({ username: username })
             });
             if (initRes.ok) {
@@ -159,8 +191,15 @@ btnCreateRoom.addEventListener('click', async () => {
     try {
         const res = await fetch('/api/rooms/create', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ hostName: pilot, preferredCode: desiredCode || null })
+            headers: {
+                'Content-Type': 'application/json',
+                'ngrok-skip-browser-warning': 'true'
+            },
+            body: JSON.stringify({
+                hostName: pilot,
+                preferredCode: desiredCode || null,
+                vehicleType: selectedVehicleMemory
+            })
         });
 
         if (res.status === 201) {
@@ -189,8 +228,14 @@ btnJoinRace.addEventListener('click', async () => {
     try {
         const res = await fetch(`/api/rooms/${encodeURIComponent(room)}/join`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ runnerId: pilot })
+            headers: {
+                'Content-Type': 'application/json',
+                'ngrok-skip-browser-warning': 'true'
+            },
+            body: JSON.stringify({
+                runnerId: pilot,
+                vehicleType: selectedVehicleMemory
+            })
         });
 
         if (res.ok) {
@@ -236,7 +281,12 @@ function exitWaitingRoom() {
 async function refreshRoomState() {
     if (!activeRoomCode || redirecting) return;
     try {
-        const res = await fetch(`/api/rooms/${encodeURIComponent(activeRoomCode)}`);
+        const res = await fetch(`/api/rooms/${encodeURIComponent(activeRoomCode)}`, {
+            headers: {
+                'ngrok-skip-browser-warning': 'true',
+                'Accept': 'application/json'
+            }
+        });
         if (!res.ok) return;
         const room = await res.json();
         renderWaitingRoom(room);
@@ -271,9 +321,12 @@ function renderWaitingRoom(room) {
     guestWaitingMsg.style.display = (!soyHost && room.status === 'WAITING') ? 'block' : 'none';
     btnStartRace.disabled = room.status !== 'WAITING';
 
+    // 🚀 Enviamos también &car= en la URL para que runner.js siempre reciba el vehículo elegido
     if (room.status === 'IN_PROGRESS' && !redirecting) {
         redirecting = true;
-        window.location.href = `runner.html?player=${encodeURIComponent(pilot)}&room=${encodeURIComponent(room.roomCode)}`;
+        safeSetStorage('ecirace_car', selectedVehicleMemory);
+        safeSetStorage('ecirace_vehicle', selectedVehicleMemory);
+        window.location.href = `runner.html?player=${encodeURIComponent(pilot)}&room=${encodeURIComponent(room.roomCode)}&car=${encodeURIComponent(selectedVehicleMemory)}`;
     }
 }
 
@@ -285,7 +338,10 @@ btnStartRace.addEventListener('click', async () => {
     try {
         const res = await fetch(`/api/rooms/${encodeURIComponent(activeRoomCode)}/start`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'ngrok-skip-browser-warning': 'true'
+            },
             body: JSON.stringify({ hostName: pilot })
         });
         if (!res.ok) {
@@ -301,9 +357,12 @@ btnStartRace.addEventListener('click', async () => {
     }
 });
 
+// 🚀 Conectado al canal WebSocket nativo para no fallar con Ngrok
 function conectarSocketDeSala(roomCode) {
     try {
-        const socket = new SockJS('/race-ws');
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+        const wsUrl = wsProtocol + window.location.host + '/race-ws-native';
+        const socket = new WebSocket(wsUrl);
         stompClient = Stomp.over(socket);
         stompClient.debug = null;
         stompClient.connect({}, () => {
@@ -315,7 +374,7 @@ function conectarSocketDeSala(roomCode) {
             console.warn('No se pudo conectar el socket de la sala de espera; se sigue con polling.');
         });
     } catch (e) {
-        console.warn('SockJS/Stomp no disponible, se usa solo polling:', e);
+        console.warn('WebSocket/Stomp no disponible, se usa solo polling:', e);
     }
 }
 
@@ -330,7 +389,7 @@ btnGoDashboard.addEventListener('click', () => {
 
 btnLogout.addEventListener('click', () => {
     if (confirm("¿Deseas cerrar la sesión de piloto?")) {
-        localStorage.removeItem('ecirace_username');
+        safeRemoveStorage('ecirace_username');
         window.location.href = "index.html";
     }
 });
@@ -355,19 +414,22 @@ btnSaveTag.addEventListener('click', async () => {
     try {
         const res = await fetch('/api/auth/username', {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'ngrok-skip-browser-warning': 'true'
+            },
             body: JSON.stringify({ currentUsername: currentName, newUsername: nextName })
         });
         if (res.ok) {
             const updated = await res.json();
-            localStorage.setItem('ecirace_username', updated.username);
+            safeSetStorage('ecirace_username', updated.username);
             renderizarPerfil(updated);
         } else {
-            localStorage.setItem('ecirace_username', nextName);
+            safeSetStorage('ecirace_username', nextName);
             await cargarPerfil(nextName);
         }
     } catch (e) {
-        localStorage.setItem('ecirace_username', nextName);
+        safeSetStorage('ecirace_username', nextName);
         await cargarPerfil(nextName);
     }
 
@@ -400,10 +462,8 @@ cargarPerfil(activePilot);
 cargarSalasActivas();
 setInterval(cargarSalasActivas, 5000);
 
+window.selectVehicle(selectedVehicleMemory);
+
 if (preselectedRoom) {
-    // Registrar al piloto en la sala (join) antes de entrar a la sala de espera
     btnJoinRace.click();
 }
-
-const currentVehicle = localStorage.getItem('ecirace_vehicle') || 'RENAULT_4';
-window.selectVehicle(currentVehicle);

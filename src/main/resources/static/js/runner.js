@@ -1,11 +1,34 @@
 const urlParams = new URLSearchParams(window.location.search);
-let runnerId = urlParams.get('player') || localStorage.getItem('ecirace_username');
+let runnerId = urlParams.get('player');
+let selectedCar = urlParams.get('car');
+
+// 🚀 1. Blindaje de localStorage y lectura del carro elegido en el Lobby
+try {
+    if (!runnerId) {
+        runnerId = localStorage.getItem('ecirace_username');
+    }
+    if (!selectedCar) {
+        selectedCar = localStorage.getItem('ecirace_car') || localStorage.getItem('selectedCar');
+    }
+} catch (e) {
+    console.warn("Memoria local restringida por el navegador.");
+}
+
 if (!runnerId || runnerId.trim() === '') {
     alert("Acceso denegado: Debes iniciar sesión en el Lobby antes de ingresar a la pista.");
     window.location.href = "index.html";
 }
 runnerId = runnerId.trim();
-localStorage.setItem('ecirace_username', runnerId);
+// Solo se aceptan los valores del enum VehicleType (los mismos que usa el Lobby y el Dashboard)
+const VEHICULOS_VALIDOS = ['RENAULT_4', 'CHEVROLET_SPARK', 'MAZDA_323'];
+selectedCar = (selectedCar || '').trim().toUpperCase();
+if (!VEHICULOS_VALIDOS.includes(selectedCar)) selectedCar = 'RENAULT_4';
+
+try {
+    localStorage.setItem('ecirace_username', runnerId);
+    localStorage.setItem('ecirace_car', selectedCar);
+} catch (e) {}
+
 const roomCode = (urlParams.get('room') || 'CAMPUS-ECI').toUpperCase();
 document.getElementById('runnerIdDisplay').innerText = runnerId;
 document.getElementById('roomDisplay').innerText = roomCode;
@@ -50,15 +73,16 @@ let mockIndex = 0;
 let metaLatGlobal = null;
 let metaLonGlobal = null;
 
+// 🚀 Fórmula Haversine corregida (sin duplicados y con operadores *)
 function calcularDistanciaMetros(lat1, lon1, lat2, lon2) {
     if (!lat1 || !lon1 || !lat2 || !lon2) return Infinity;
     const R = 6371e3; // Radio de la Tierra en metros
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
         Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-        Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
 }
 
@@ -90,12 +114,16 @@ async function consultarEstadoSala() {
     try {
         const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}`, {
             headers: {
-                'ngrok-skip-browser-warning': 'true', // 🚀 Bypass de seguridad para Ngrok
+                'ngrok-skip-browser-warning': 'true',
                 'Accept': 'application/json'
             }
         });
         if (res.ok) {
             const room = await res.json();
+            if (room.metaLat && room.metaLon) {
+                metaLatGlobal = room.metaLat;
+                metaLonGlobal = room.metaLon;
+            }
             applyGateState(room.status);
         } else {
             applyGateState('WAITING');
@@ -142,9 +170,11 @@ function conectarWebSocket() {
                 detenerTransmisionContinua();
 
                 const soyElGanador = room.winnerId && room.winnerId.trim().toLowerCase() === runnerId.trim().toLowerCase();
-                mostrarNotificacionVictoria(room.winnerId, soyElGanador);
+                if (typeof mostrarNotificacionVictoria === 'function') {
+                    mostrarNotificacionVictoria(room.winnerId, soyElGanador);
+                }
 
-                localStorage.removeItem('ecirace_username');
+                try { localStorage.removeItem('ecirace_username'); } catch (e) {}
             }
         });
     }, function () {
@@ -169,13 +199,14 @@ function iniciarTransmisionContinua() {
                 longitud: currentPosition.lng,
                 longitude: currentPosition.lng,
                 roomCode: roomCode,
+                car: selectedCar, // 🚀 2. Enviamos el carro elegido en cada paquete
                 timestamp: Date.now()
             };
             stompClient.send("/app/telemetry", {}, JSON.stringify(payload));
             packetsSent++;
             if (packetsCountDisplay) packetsCountDisplay.innerText = packetsSent;
         }
-    }, 300); // 🚀 300ms
+    }, 300);
 }
 
 function detenerTransmisionContinua() {
@@ -183,18 +214,6 @@ function detenerTransmisionContinua() {
         clearInterval(networkInterval);
         networkInterval = null;
     }
-}
-
-function calcularDistanciaMetros(lat1, lon1, lat2, lon2) {
-    if (!lat1 || !lon1 || !lat2 || !lon2) return Infinity;
-    const R = 6371e3;
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-        Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    return R * c;
 }
 
 function updateUI(lat, lng, acc, speed, source) {
@@ -223,7 +242,9 @@ function updateUI(lat, lng, acc, speed, source) {
 
             raceStateDisplay.textContent = 'FINISHED';
             raceStateDisplay.style.color = '#FFD700';
-            mostrarNotificacionVictoria(runnerId, true);
+            if (typeof mostrarNotificacionVictoria === 'function') {
+                mostrarNotificacionVictoria(runnerId, true);
+            }
         }
     }
 }
@@ -248,7 +269,7 @@ btnStartGps.addEventListener('click', () => {
     }, (err) => {
         log("Error en GPS: " + err.message, "error");
     }, {
-        enableHighAccuracy: true, // 🚀 GPS Físico activado
+        enableHighAccuracy: true,
         maximumAge: 0,
         timeout: 10000
     });
@@ -302,10 +323,11 @@ btnToggleSim.addEventListener('click', () => {
             const simulatedSpeed = 12.0 + Math.random() * 4.0;
             updateUI(wp.lat + jitter, wp.lng + jitter, 5, simulatedSpeed, 'GPS_SIMULADOR');
             mockIndex = (mockIndex + 1) % mockWaypoints.length;
-        }, 300); // 🚀 300ms
+        }, 300);
         iniciarTransmisionContinua();
     }
 });
+
 // --- SIMULADOR DE VICTORIA DEFINITIVO ---
 const btnSimulateWin = document.getElementById('btnSimulateWin');
 
@@ -321,7 +343,12 @@ if (btnSimulateWin) {
             let targetLon = -74.043000;
 
             try {
-                const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}`);
+                const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}`, {
+                    headers: {
+                        'ngrok-skip-browser-warning': 'true',
+                        'Accept': 'application/json'
+                    }
+                });
                 if (res.ok) {
                     const room = await res.json();
                     if (room.metaLat && room.metaLon) {
@@ -345,7 +372,9 @@ if (btnSimulateWin) {
                 corredorId: runnerId, runnerId: runnerId,
                 latitud: startLat, latitude: startLat,
                 longitud: startLon, longitude: startLon,
-                roomCode: roomCode, timestamp: Date.now()
+                roomCode: roomCode,
+                car: selectedCar, // 🚀 3. Incluimos el carro también en la simulación
+                timestamp: Date.now()
             };
             if (stompClient && stompClient.connected) {
                 stompClient.send("/app/telemetry", {}, JSON.stringify(primerPayload));
@@ -376,19 +405,22 @@ if (btnSimulateWin) {
                         corredorId: runnerId, runnerId: runnerId,
                         latitud: lat, latitude: lat,
                         longitud: lon, longitude: lon,
-                        roomCode: roomCode, timestamp: Date.now()
+                        roomCode: roomCode,
+                        car: selectedCar, // 🚀 Incluimos el carro en cada paso hacia la meta
+                        timestamp: Date.now()
                     }));
 
                     if (currentStep >= steps) {
                         clearInterval(window.simPathInterval);
                         btnSimulateWin.textContent = "🏆 Línea cruzada exacta";
 
-
                         setTimeout(() => {
                             if (raceStateDisplay.textContent !== 'FINISHED') {
                                 raceStateDisplay.textContent = 'FINISHED';
                                 raceStateDisplay.style.color = '#FFD700';
-                                mostrarNotificacionVictoria(runnerId, true);
+                                if (typeof mostrarNotificacionVictoria === 'function') {
+                                    mostrarNotificacionVictoria(runnerId, true);
+                                }
                             }
                         }, 500);
                     }

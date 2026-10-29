@@ -9,6 +9,7 @@ public class Ubication {
     private boolean suspicious = false;
     private String roomCode = "CAMPUS-ECI";
     private VehicleType vehicleType = VehicleType.RENAULT_4;
+    private String car;
 
 
     public Ubication() {}
@@ -72,6 +73,22 @@ public class Ubication {
     public void setVehicleType(VehicleType vehicleType) {
         if (vehicleType != null) {
             this.vehicleType = vehicleType;
+        }
+    }
+    public String getCar() {
+        if (car != null && !car.trim().isEmpty()) {
+            return car;
+        }
+        return vehicleType != null ? vehicleType.name() : "RENAULT_4";
+    }
+
+    public void setCar(String car) {
+        this.car = car;
+        if (car != null && !car.trim().isEmpty()) {
+            try {
+                this.vehicleType = VehicleType.valueOf(car.trim().toUpperCase());
+            } catch (IllegalArgumentException ignored) {
+            }
         }
     }
 
