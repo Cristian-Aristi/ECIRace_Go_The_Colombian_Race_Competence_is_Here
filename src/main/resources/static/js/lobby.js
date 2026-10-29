@@ -204,6 +204,20 @@ btnCreateRoom.addEventListener('click', async () => {
 
         if (res.status === 201) {
             const room = await res.json();
+            // El que crea la sala desde el lobby también corre: hay que registrarlo como
+            // corredor, si no el servidor rechaza su telemetría ("runner not registered").
+            try {
+                await fetch(`/api/rooms/${encodeURIComponent(room.roomCode)}/join`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'ngrok-skip-browser-warning': 'true'
+                    },
+                    body: JSON.stringify({ runnerId: pilot, vehicleType: selectedVehicleMemory })
+                });
+            } catch (e) {
+                console.warn('No se pudo registrar al host como corredor:', e);
+            }
             enterWaitingRoom(room.roomCode);
         } else {
             const err = await res.json().catch(() => ({ error: 'No se pudo crear la sala.' }));

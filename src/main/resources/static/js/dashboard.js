@@ -91,10 +91,48 @@ if ("geolocation" in navigator) {
 }
 
 const corredores = {};
+
+// --- Encuadre automático ---
+// El mapa arrancaba fijo en el campus. Con GPS real el corredor está en su ubicación verdadera
+// (a veces a km del campus), así que el marcador SÍ existía pero quedaba fuera de la vista.
+let autoEncuadre = true;
+let ajusteProgramatico = false;
+
+function encuadrarCorredores(forzar) {
+    if (!autoEncuadre && !forzar) return;
+    const puntos = Object.values(corredores).map(c => c.marker.getLatLng());
+    if (puntos.length === 0) return;
+    puntos.push(L.latLng(metaCoordenadas[0], metaCoordenadas[1]));   // incluye la meta
+    ajusteProgramatico = true;
+    map.fitBounds(L.latLngBounds(puntos), { padding: [80, 80], maxZoom: 18, animate: true });
+    setTimeout(() => { ajusteProgramatico = false; }, 800);
+}
+
+// Si el host mueve o hace zoom al mapa a mano, dejamos de re-encuadrar solos
+map.on('dragstart', () => { autoEncuadre = false; actualizarBotonEncuadre(); });
+map.on('zoomstart', () => { if (!ajusteProgramatico) { autoEncuadre = false; actualizarBotonEncuadre(); } });
+
+const controlEncuadre = L.control({ position: 'bottomright' });
+controlEncuadre.onAdd = function () {
+    const btn = L.DomUtil.create('button', 'btn btn-secondary');
+    btn.type = 'button';
+    btn.id = 'btnEncuadre';
+    btn.style.cssText = 'width:auto;padding:0.45rem 0.8rem;font-size:0.8rem;cursor:pointer;';
+    L.DomEvent.disableClickPropagation(btn);
+    L.DomEvent.on(btn, 'click', () => { autoEncuadre = true; actualizarBotonEncuadre(); encuadrarCorredores(true); });
+    return btn;
+};
+controlEncuadre.addTo(map);
+function actualizarBotonEncuadre() {
+    const btn = document.getElementById('btnEncuadre');
+    if (btn) btn.textContent = autoEncuadre ? '🎯 Siguiendo corredores' : '🎯 Centrar en corredores';
+}
+actualizarBotonEncuadre();
 let stompClient = null;
 let hostNameDeLaSala = null;
 let ultimoRosterConocido = [];
 let carreraTerminada = false;
+let ultimoEstadoLogueado = null;
 
 const statusDisplay = document.getElementById('status');
 const hostStatusBadge = document.getElementById('hostStatusBadge');
@@ -237,13 +275,6 @@ function conectarWebSocket() {
             actualizarMapaYLista(ubication);
         });
 
-        stompClient.subscribe('/topic/broadcast', function (mensaje) {
-            const ubication = JSON.parse(mensaje.body);
-            if ((ubication.roomCode || 'CAMPUS-ECI').toUpperCase() === roomCode) {
-                actualizarMapaYLista(ubication);
-            }
-        });
-
         stompClient.subscribe('/topic/rooms/' + roomCode + '/status', function (mensaje) {
             aplicarEstadoDeSala(JSON.parse(mensaje.body));
         });
@@ -299,7 +330,9 @@ function actualizarMapaYLista(ubication) {
             car: vehiculo,
             rumbo: 0
         };
+        log(`🚗 ${id} apareció en el mapa (${lat.toFixed(5)}, ${lon.toFixed(5)})`, 'info');
     }
+    encuadrarCorredores(false);
 
     const alertTag = isSuspicious ? " <span style='color:red;'>🚨 [ANOMALÍA]</span>" : "";
     corredores[id].marker.bindPopup(`
@@ -311,22 +344,21 @@ function actualizarMapaYLista(ubication) {
         </div>
     `);
 
-    if (!carreraTerminada && raceStatusValue && raceStatusValue.textContent === 'IN_PROGRESS') {
-        const distanciaAMeta = map.distance([lat, lon], metaCoordenadas);
-
-        if (distanciaAMeta <= 15.0) {
-            log(`🏁 ¡El radar detectó que ${id} tocó la meta! Forzando victoria...`, 'info');
-
-            aplicarEstadoDeSala({
-                status: 'FINISHED',
-                hostName: hostNameDeLaSala,
-                activeRunners: ultimoRosterConocido,
-                winnerId: id
-            });
-        }
-    }
+    // La meta y el ganador los decide el servidor (GameLoopService) y llegan por /status.
 
     renderizarListaCorredores();
+}
+
+// Recupera la última posición de cada corredor (por si el tablero se abrió tarde o el corredor está quieto)
+async function cargarPosicionesConocidas() {
+    try {
+        const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}/positions`, {
+            headers: { 'ngrok-skip-browser-warning': 'true', 'Accept': 'application/json' }
+        });
+        if (!res.ok) return;
+        const lista = await res.json();
+        lista.forEach(u => { if (u && u.runnerId && !corredores[u.runnerId]) actualizarMapaYLista(u); });
+    } catch (e) { /* se reintenta en el siguiente ciclo */ }
 }
 
 async function refrescarRosterDeSala() {
@@ -345,7 +377,10 @@ async function refrescarRosterDeSala() {
 
 function aplicarEstadoDeSala(room) {
     hostNameDeLaSala = room.hostName;
-    log(`👥 Sala ${roomCode} | Estado: ${room.status}`, 'info');
+    if (room.status !== ultimoEstadoLogueado) {
+        log(`👥 Sala ${roomCode} | Estado: ${room.status}`, 'info');
+        ultimoEstadoLogueado = room.status;
+    }
 
     if (room.status === 'WAITING' || room.status === 'IN_PROGRESS') {
         carreraTerminada = false;
@@ -368,6 +403,9 @@ function aplicarEstadoDeSala(room) {
 
     ultimoRosterConocido = room.activeRunners || [];
     renderizarListaCorredores();
+    if (room.status === 'IN_PROGRESS' && ultimoRosterConocido.some(r => !corredores[r])) {
+        cargarPosicionesConocidas();
+    }
 
     if (room.status === 'FINISHED' && !carreraTerminada) {
         carreraTerminada = true;

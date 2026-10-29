@@ -1,5 +1,7 @@
 package edu.eci.arsw.eciracego.model;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+
 public class Ubication {
     private String runnerId;
     private double latitude;
@@ -14,10 +16,17 @@ public class Ubication {
 
     public Ubication() {}
 
-    public Ubication(String corredorId, double latitud, double longitud) {
-        this.runnerId = corredorId;
-        this.latitude = latitud;
-        this.longitude = longitud;
+    /**
+     * Solo para uso en código/tests. Se desactiva como creador de Jackson: con Spring Boot 4 (Jackson 3)
+     * los nombres de parámetro del constructor se usan como nombres JSON, y antes exigía los campos
+     * "latitud"/"longitud" (que el cliente nunca envía) -> "Cannot map null into type double" y se
+     * perdía TODA la telemetría. Los parámetros se llaman igual que las propiedades JSON por seguridad.
+     */
+    @JsonCreator(mode = JsonCreator.Mode.DISABLED)
+    public Ubication(String runnerId, double latitude, double longitude) {
+        this.runnerId = runnerId;
+        this.latitude = latitude;
+        this.longitude = longitude;
         this.timestamp = System.currentTimeMillis();
         this.roomCode = "CAMPUS-ECI";
     }

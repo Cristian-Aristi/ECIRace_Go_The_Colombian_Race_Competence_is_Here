@@ -9,7 +9,12 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.ResponseBody;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.Executor;
 
@@ -65,8 +70,24 @@ public class RaceController {
                     ubication.getRunnerId(),
                     ubication.getSpeed());
 
-            messagingTemplate.convertAndSend("/topic/broadcast", ubication);
+            // Solo al canal de la sala: antes también se enviaba a /topic/broadcast y cada
+            // dashboard recibía (y procesaba) todo dos veces, incluidas las salas ajenas.
             messagingTemplate.convertAndSend("/topic/rooms/" + room, ubication);
         });
+    }
+
+    /**
+     * Última posición conocida de cada corredor de la sala. Un tablero que se abre (o se recarga)
+     * después de que el corredor empezó a transmitir, o un corredor quieto cuyo GPS ya no emite
+     * fixes nuevos, de otro modo no aparecería en el mapa hasta el siguiente paquete.
+     */
+    @GetMapping("/api/rooms/{code}/positions")
+    @ResponseBody
+    @CrossOrigin(origins = "*")
+    public List<Ubication> roomPositions(@PathVariable("code") String code) {
+        String room = code.trim().toUpperCase();
+        return raceManager.getGlobalState().stream()
+                .filter(u -> room.equalsIgnoreCase(u.getRoomCode()))
+                .collect(java.util.stream.Collectors.toList());
     }
 }

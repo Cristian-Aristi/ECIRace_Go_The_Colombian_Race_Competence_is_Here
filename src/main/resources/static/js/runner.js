@@ -58,6 +58,13 @@ let networkInterval = null;
 let currentPosition = null;
 let packetsSent = 0;
 let raceInProgress = false;
+let raceFinishedHandled = false;   // para mostrar el resultado una sola vez
+let metaReachedNotified = false;   // aviso local "llegaste a la meta" (la victoria la confirma el servidor)
+let lastSentFixTs = 0;             // timestamp del último fix GPS enviado (evita reenviar el mismo punto)
+let statusPollInterval = null;
+let reconnectTimer = null;
+let wakeLock = null;
+let estadoSalaFallando = false;
 
 const mockWaypoints = [
     { lat: 4.782800, lng: -74.043000 },
@@ -69,7 +76,38 @@ const mockWaypoints = [
     { lat: 4.785000, lng: -74.044200 },
     { lat: 4.785300, lng: -74.044500 }
 ];
-let mockIndex = 0;
+
+// --- Simulador de ruta: camina por los waypoints a velocidad humana (~12 km/h) en ida y vuelta.
+// Antes saltaba de waypoint en waypoint (~40 m) cada 300 ms (≈ 480 km/h) y el anti-trampas
+// del servidor marcaba como sospechoso cada paquete del simulador.
+const SIM_SPEED_MS = 3.3;   // metros por segundo (~12 km/h)
+const SIM_TICK_MS = 300;
+const MAX_ERROR_GPS_M = 50;   // fixes con más error que esto no se envían
+let simMetros = 0;
+let simDireccion = 1;
+let simSegmentos = null;
+
+function prepararRutaSimulada() {
+    simSegmentos = [];
+    let acumulado = 0;
+    for (let i = 0; i < mockWaypoints.length - 1; i++) {
+        const a = mockWaypoints[i], b = mockWaypoints[i + 1];
+        const largo = calcularDistanciaMetros(a.lat, a.lng, b.lat, b.lng);
+        simSegmentos.push({ a, b, inicio: acumulado, largo });
+        acumulado += largo;
+    }
+    simSegmentos.total = acumulado;
+}
+
+function siguientePuntoSimulado() {
+    if (!simSegmentos) prepararRutaSimulada();
+    simMetros += simDireccion * SIM_SPEED_MS * (SIM_TICK_MS / 1000);
+    if (simMetros >= simSegmentos.total) { simMetros = simSegmentos.total; simDireccion = -1; }
+    if (simMetros <= 0) { simMetros = 0; simDireccion = 1; }
+    const seg = simSegmentos.find(s => simMetros <= s.inicio + s.largo) || simSegmentos[simSegmentos.length - 1];
+    const f = seg.largo > 0 ? (simMetros - seg.inicio) / seg.largo : 0;
+    return { lat: seg.a.lat + (seg.b.lat - seg.a.lat) * f, lng: seg.a.lng + (seg.b.lng - seg.a.lng) * f };
+}
 let metaLatGlobal = null;
 let metaLonGlobal = null;
 
@@ -92,6 +130,114 @@ function log(msg, type = 'info') {
     entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
     eventLog.appendChild(entry);
     eventLog.scrollTop = eventLog.scrollHeight;
+}
+
+// Payload mínimo: solo los campos que el backend (Ubication) realmente usa.
+// El timestamp es el del FIX del GPS, no el de envío: así el anti-trampas calcula la
+// velocidad sobre el tiempo real entre dos lecturas del sensor y no sobre el intervalo de envío.
+function construirPayload(lat, lng, ts) {
+    return {
+        runnerId: runnerId,
+        latitude: lat,
+        longitude: lng,
+        roomCode: roomCode,
+        car: selectedCar,
+        timestamp: ts || Date.now()
+    };
+}
+
+function enviarTelemetria(payload) {
+    if (!stompClient || !stompClient.connected || !isWsConnected) return false;
+    try {
+        stompClient.send("/app/telemetry", {}, JSON.stringify(payload));
+        packetsSent++;
+        if (packetsCountDisplay) packetsCountDisplay.innerText = packetsSent;
+        return true;
+    } catch (e) {
+        isWsConnected = false;
+        return false;
+    }
+}
+
+// Mantiene la pantalla encendida: si el teléfono se bloquea, el navegador congela el GPS y el socket.
+async function solicitarWakeLock() {
+    try {
+        if ('wakeLock' in navigator && !wakeLock) {
+            wakeLock = await navigator.wakeLock.request('screen');
+            wakeLock.addEventListener('release', () => { wakeLock = null; });
+        }
+    } catch (e) { /* no soportado o denegado: se ignora */ }
+}
+function liberarWakeLock() {
+    try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch (e) {}
+}
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && (watchId !== null || simInterval !== null || window.simPathInterval)) {
+        solicitarWakeLock();
+    }
+});
+
+function mostrarNotificacionVictoria(winnerId, soyElGanador) {
+    const viejo = document.getElementById('victoryBanner');
+    if (viejo) viejo.remove();
+    const banner = document.createElement('div');
+    banner.id = 'victoryBanner';
+    banner.style.cssText = `
+        position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+        width: min(92vw, 420px); box-sizing: border-box; text-align: center;
+        padding: 1rem 1.25rem; border-radius: 12px; z-index: 9999; font-family: monospace;
+        font-weight: bold; border: 3px solid #fff; box-shadow: 0 10px 30px rgba(0,0,0,0.7);
+        ${soyElGanador
+        ? 'background: linear-gradient(135deg, #FFD700, #FFA500); color: #000;'
+        : 'background: #1c2024; color: #e8a33d;'}
+    `;
+    const nombre = String(winnerId || 'Nadie').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    banner.innerHTML = soyElGanador
+        ? '🏆 ¡GANASTE LA CARRERA! 🏆'
+        : `🏁 Carrera finalizada<br><span style="font-size:0.9rem;">Ganador: ${nombre}</span>`;
+    document.body.appendChild(banner);
+}
+
+function detenerTodo() {
+    if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+    if (simInterval !== null) { clearInterval(simInterval); simInterval = null; }
+    if (window.simPathInterval) { clearInterval(window.simPathInterval); window.simPathInterval = null; }
+    detenerTransmisionContinua();
+    liberarWakeLock();
+}
+
+// Punto único de entrada para el estado de la sala: lo usan el WebSocket Y el polling,
+// así un teléfono que perdió el socket igual se entera de que la carrera empezó o terminó.
+function procesarEstadoSala(room) {
+    if (!room) return;
+    if (room.metaLat && room.metaLon) {
+        metaLatGlobal = room.metaLat;
+        metaLonGlobal = room.metaLon;
+    }
+    const anterior = raceStateDisplay.textContent;
+    applyGateState(room.status);
+
+    if (room.status !== anterior) {
+        log(`👥 Estado de la sala: ${room.status}`, 'info');
+        if (room.status === 'IN_PROGRESS') log('🏁 ¡El host inició la carrera! GPS habilitado.', 'info');
+    }
+
+    if (room.status === 'WAITING' || room.status === 'IN_PROGRESS') {
+        raceFinishedHandled = false;
+    }
+
+    if (room.status === 'FINISHED' && !raceFinishedHandled) {
+        raceFinishedHandled = true;
+        raceInProgress = false;
+        raceStateDisplay.style.color = '#FFD700';
+        log(`🏁 ¡Carrera finalizada! Ganador: ${room.winnerId || 'ninguno'}`, 'info');
+        detenerTodo();
+        hudStatus.textContent = "FINALIZADA";
+
+        const soyElGanador = !!room.winnerId && room.winnerId.trim().toLowerCase() === runnerId.trim().toLowerCase();
+        mostrarNotificacionVictoria(room.winnerId, soyElGanador);
+        try { localStorage.removeItem('ecirace_username'); } catch (e) {}
+    }
 }
 
 function applyGateState(status) {
@@ -119,18 +265,23 @@ async function consultarEstadoSala() {
             }
         });
         if (res.ok) {
-            const room = await res.json();
-            if (room.metaLat && room.metaLon) {
-                metaLatGlobal = room.metaLat;
-                metaLonGlobal = room.metaLon;
-            }
-            applyGateState(room.status);
+            procesarEstadoSala(await res.json());
         } else {
             applyGateState('WAITING');
         }
+        estadoSalaFallando = false;
     } catch (e) {
-        log('No se pudo consultar el estado de la sala, reintentando...', 'warn');
+        if (!estadoSalaFallando) log('No se pudo consultar el estado de la sala, reintentando...', 'warn');
+        estadoSalaFallando = true;
     }
+}
+
+function programarReconexion() {
+    if (reconnectTimer !== null) return;       // evita acumular varios reintentos
+    reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        conectarWebSocket();
+    }, 3000);
 }
 
 function conectarWebSocket() {
@@ -150,61 +301,31 @@ function conectarWebSocket() {
         log(`Conexión WebSocket establecida para sala ${roomCode}.`, "info");
 
         stompClient.subscribe(`/topic/rooms/${roomCode}/status`, (msg) => {
-            const room = JSON.parse(msg.body);
-            if (room.metaLat && room.metaLon) {
-                metaLatGlobal = room.metaLat;
-                metaLonGlobal = room.metaLon;
-            }
-            applyGateState(room.status);
-
-            log(`👥 Estado actualizado de la sala: ${room.status}`, 'info');
-
-            if (room.status === 'IN_PROGRESS') {
-                log('🏁 ¡El host inició la carrera! GPS habilitado.', 'info');
-            }
-            else if (room.status === 'FINISHED') {
-                log(`🏁 ¡Carrera finalizada! Ganador: ${room.winnerId}`, 'info');
-
-                if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
-                if (simInterval !== null) { clearInterval(simInterval); simInterval = null; }
-                detenerTransmisionContinua();
-
-                const soyElGanador = room.winnerId && room.winnerId.trim().toLowerCase() === runnerId.trim().toLowerCase();
-                if (typeof mostrarNotificacionVictoria === 'function') {
-                    mostrarNotificacionVictoria(room.winnerId, soyElGanador);
-                }
-
-                try { localStorage.removeItem('ecirace_username'); } catch (e) {}
-            }
+            procesarEstadoSala(JSON.parse(msg.body));
         });
+
+        // Si se perdió el socket durante la carrera, nos ponemos al día con el estado actual
+        consultarEstadoSala();
     }, function () {
         isWsConnected = false;
+        // stomp.js llama a este callback tanto si falla la conexión inicial como si se cae el socket después
         if (wsStatusDisplay) {
-            wsStatusDisplay.innerText = "DESCONECTADO";
+            wsStatusDisplay.innerText = "RECONECTANDO...";
             wsStatusDisplay.style.color = "var(--color-alert)";
         }
-        setTimeout(conectarWebSocket, 5000);
+        programarReconexion();
     });
 }
 
 function iniciarTransmisionContinua() {
     if (networkInterval !== null) clearInterval(networkInterval);
     networkInterval = setInterval(() => {
-        if (isWsConnected && currentPosition && raceInProgress) {
-            const payload = {
-                corredorId: runnerId,
-                runnerId: runnerId,
-                latitud: currentPosition.lat,
-                latitude: currentPosition.lat,
-                longitud: currentPosition.lng,
-                longitude: currentPosition.lng,
-                roomCode: roomCode,
-                car: selectedCar, // 🚀 2. Enviamos el carro elegido en cada paquete
-                timestamp: Date.now()
-            };
-            stompClient.send("/app/telemetry", {}, JSON.stringify(payload));
-            packetsSent++;
-            if (packetsCountDisplay) packetsCountDisplay.innerText = packetsSent;
+        if (!isWsConnected || !currentPosition || !raceInProgress) return;
+        // Solo se envía cuando hay un fix nuevo (el GPS entrega ~1 por segundo; antes se
+        // reenviaba la misma posición cada 300 ms y se multiplicaba el tráfico por cada teléfono).
+        if (currentPosition.ts === lastSentFixTs) return;
+        if (enviarTelemetria(construirPayload(currentPosition.lat, currentPosition.lng, currentPosition.ts))) {
+            lastSentFixTs = currentPosition.ts;
         }
     }, 300);
 }
@@ -216,8 +337,8 @@ function detenerTransmisionContinua() {
     }
 }
 
-function updateUI(lat, lng, acc, speed, source) {
-    currentPosition = { lat, lng };
+function updateUI(lat, lng, acc, speed, source, fixTs) {
+    currentPosition = { lat, lng, ts: fixTs || Date.now() };
     hudStatus.textContent = "GPS ACTIVO";
     hudStatus.style.color = "var(--color-teal)";
     sourceBadge.textContent = source;
@@ -228,23 +349,14 @@ function updateUI(lat, lng, acc, speed, source) {
     speedDisplay.textContent = speed.toFixed(1);
     timeDisplay.textContent = new Date().toLocaleTimeString();
 
-    if (raceInProgress && metaLatGlobal && metaLonGlobal) {
+    // La meta la valida el SERVIDOR (el primero que llegue gana, sin importar el reloj de cada teléfono).
+    // Aquí solo avisamos y seguimos enviando la posición hasta que llegue el estado FINISHED.
+    if (raceInProgress && !metaReachedNotified && metaLatGlobal && metaLonGlobal) {
         const distancia = calcularDistanciaMetros(lat, lng, metaLatGlobal, metaLonGlobal);
-
-        if (distancia <= 15.0 && raceStateDisplay.textContent !== 'FINISHED') {
-            log(`🏁 ¡Radar a bordo detectó la meta a ${distancia.toFixed(1)} metros!`, 'info');
-
-            raceInProgress = false;
-            if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
-            if (simInterval !== null) { clearInterval(simInterval); simInterval = null; }
-            if (window.simPathInterval) { clearInterval(window.simPathInterval); window.simPathInterval = null; }
-            detenerTransmisionContinua();
-
-            raceStateDisplay.textContent = 'FINISHED';
-            raceStateDisplay.style.color = '#FFD700';
-            if (typeof mostrarNotificacionVictoria === 'function') {
-                mostrarNotificacionVictoria(runnerId, true);
-            }
+        if (distancia <= 15.0) {
+            metaReachedNotified = true;
+            log(`🏁 Estás a ${distancia.toFixed(1)} m de la meta. Esperando confirmación del servidor...`, 'info');
+            hudStatus.textContent = "EN LA META";
         }
     }
 }
@@ -262,12 +374,22 @@ btnStartGps.addEventListener('click', () => {
     btnStopGps.disabled = false;
     btnToggleSim.disabled = true;
     log("Iniciando sensor GPS de alta precisión...", "info");
+    if (!window.isSecureContext) {
+        log("⚠️ Esta página no es HTTPS: el navegador del celular bloqueará el GPS. Abre la app por el enlace https (ngrok) o usa el simulador.", "warn");
+    }
+    solicitarWakeLock();
 
     watchId = navigator.geolocation.watchPosition((pos) => {
+        // Un fix con mucho error (típico al inicio o bajo techo) hace "saltar" al carro por el mapa
+        // y dispara el anti-trampas del servidor. Se descarta hasta que el GPS se estabilice.
+        if (pos.coords.accuracy > MAX_ERROR_GPS_M) {
+            log(`GPS poco preciso (± ${Math.round(pos.coords.accuracy)} m), esperando una señal mejor...`, 'warn');
+            return;
+        }
         const speedKmh = pos.coords.speed !== null && !isNaN(pos.coords.speed) ? pos.coords.speed * 3.6 : 0.0;
-        updateUI(pos.coords.latitude, pos.coords.longitude, Math.round(pos.coords.accuracy), speedKmh, 'GPS_HARDWARE');
+        updateUI(pos.coords.latitude, pos.coords.longitude, Math.round(pos.coords.accuracy), speedKmh, 'GPS_HARDWARE', pos.timestamp);
     }, (err) => {
-        log("Error en GPS: " + err.message, "error");
+        log("Error en GPS: " + err.message + (err.code === 1 ? " (permiso denegado: actívalo en los ajustes del navegador)" : ""), "error");
     }, {
         enableHighAccuracy: true,
         maximumAge: 0,
@@ -287,6 +409,7 @@ btnStopGps.addEventListener('click', () => {
         simInterval = null;
     }
     detenerTransmisionContinua();
+    liberarWakeLock();
     btnStartGps.disabled = !raceInProgress;
     btnToggleSim.disabled = !raceInProgress;
     btnStopGps.disabled = true;
@@ -316,14 +439,12 @@ btnToggleSim.addEventListener('click', () => {
         btnStopGps.disabled = false;
         btnToggleSim.textContent = "⏹️ Detener Simulador";
         log("Simulador de ruta iniciado.", "info");
+        solicitarWakeLock();
 
         simInterval = setInterval(() => {
-            const wp = mockWaypoints[mockIndex];
-            const jitter = (Math.random() - 0.5) * 0.00004;
-            const simulatedSpeed = 12.0 + Math.random() * 4.0;
-            updateUI(wp.lat + jitter, wp.lng + jitter, 5, simulatedSpeed, 'GPS_SIMULADOR');
-            mockIndex = (mockIndex + 1) % mockWaypoints.length;
-        }, 300);
+            const p = siguientePuntoSimulado();
+            updateUI(p.lat, p.lng, 5, SIM_SPEED_MS * 3.6, 'GPS_SIMULADOR');
+        }, SIM_TICK_MS);
         iniciarTransmisionContinua();
     }
 });
@@ -368,18 +489,9 @@ if (btnSimulateWin) {
             let startLat = targetLat - 0.0001;
             let startLon = targetLon - 0.0001;
 
-            const primerPayload = {
-                corredorId: runnerId, runnerId: runnerId,
-                latitud: startLat, latitude: startLat,
-                longitud: startLon, longitude: startLon,
-                roomCode: roomCode,
-                car: selectedCar, // 🚀 3. Incluimos el carro también en la simulación
-                timestamp: Date.now()
-            };
-            if (stompClient && stompClient.connected) {
-                stompClient.send("/app/telemetry", {}, JSON.stringify(primerPayload));
-            }
+            enviarTelemetria(construirPayload(startLat, startLon));
             updateUI(startLat, startLon, 1, 0, 'ENFRIANDO RADAR...');
+            solicitarWakeLock();
 
             setTimeout(() => {
                 btnSimulateWin.textContent = "🏁 Trotando a la meta (11 km/h)...";
@@ -400,29 +512,13 @@ if (btnSimulateWin) {
                     }
 
                     updateUI(lat, lon, 2, 11.3, 'SIMULACION_LEGAL');
-
-                    stompClient.send("/app/telemetry", {}, JSON.stringify({
-                        corredorId: runnerId, runnerId: runnerId,
-                        latitud: lat, latitude: lat,
-                        longitud: lon, longitude: lon,
-                        roomCode: roomCode,
-                        car: selectedCar, // 🚀 Incluimos el carro en cada paso hacia la meta
-                        timestamp: Date.now()
-                    }));
+                    enviarTelemetria(construirPayload(lat, lon));
 
                     if (currentStep >= steps) {
                         clearInterval(window.simPathInterval);
-                        btnSimulateWin.textContent = "🏆 Línea cruzada exacta";
-
-                        setTimeout(() => {
-                            if (raceStateDisplay.textContent !== 'FINISHED') {
-                                raceStateDisplay.textContent = 'FINISHED';
-                                raceStateDisplay.style.color = '#FFD700';
-                                if (typeof mostrarNotificacionVictoria === 'function') {
-                                    mostrarNotificacionVictoria(runnerId, true);
-                                }
-                            }
-                        }, 500);
+                        window.simPathInterval = null;
+                        // La victoria NO se declara aquí: la confirma el servidor para todos los dispositivos a la vez
+                        btnSimulateWin.textContent = "🏁 En la meta, esperando confirmación...";
                     }
                 }, 250);
             }, 2000);
@@ -437,3 +533,5 @@ if (btnSimulateWin) {
 
 conectarWebSocket();
 consultarEstadoSala();
+// Respaldo por si el WebSocket se cae justo cuando cambia el estado (inicio / fin de carrera)
+statusPollInterval = setInterval(consultarEstadoSala, 4000);
