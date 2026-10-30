@@ -64,7 +64,7 @@ btnCreateRoomAndGo.addEventListener('click', async () => {
     try {
         const res = await fetch('/api/rooms/create', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
             body: JSON.stringify({
                 hostName: 'Host_Central',
                 preferredCode: preferred || null
@@ -145,7 +145,7 @@ btnConfirmGoogleTag.addEventListener('click', async () => {
         try {
             const res = await fetch('/api/auth/google', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
                 body: JSON.stringify(pendingGoogleAuth)
             });
             if (res.ok) {
@@ -194,7 +194,7 @@ async function autenticarInvitado(username) {
     try {
         const res = await fetch('/api/auth/guest', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
             body: JSON.stringify({ username: username })
         });
         if (res.ok) {

@@ -10,7 +10,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
-    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/styles.css?v=2">
 
     <style>
         body {
@@ -114,20 +114,12 @@
         .leaflet-marker-icon {
             transition: transform 0.3s linear !important;
         }
-
-        .car-marker {
-            background-color: #3fa796;
-            border: 2px solid white;
-            border-radius: 50%;
-            box-shadow: 0 0 5px rgba(0,0,0,0.5);
-        }
-
-        .car-marker-alert {
-            background-color: #d6584b;
-            border: 2px solid white;
-            border-radius: 50%;
-            box-shadow: 0 0 5px rgba(0,0,0,0.5);
-            animation: pulse 1s infinite; /* Efecto de parpadeo si es trampa */
+        .car-marker, .car-marker-alert {
+            background: transparent !important;
+            border: none !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
+            animation: none !important;
         }
         @keyframes pulse {
             0% { transform: scale(1); }
@@ -200,6 +192,6 @@
 </div>
 
 <div id="map"></div>
-<script src="js/dashboard.js"></script>
+<script src="js/dashboard.js?v=8"></script>
 </body>
 </html>

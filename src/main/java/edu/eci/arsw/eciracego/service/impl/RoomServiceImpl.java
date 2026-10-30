@@ -85,7 +85,7 @@ public class RoomServiceImpl implements RoomService {
     @Override
     public RoomActionResult startRace(String roomCode, String requester, double metaLat, double metaLon) {
 
-        Room room = this.rooms.get(roomCode);
+        Room room = (roomCode == null) ? null : this.rooms.get(roomCode.trim().toUpperCase());
 
         if (room == null) {
             return RoomActionResult.NOT_FOUND;

@@ -60,7 +60,10 @@ map.on('click', async function(e) {
         try {
             await fetch(`/api/rooms/${encodeURIComponent(roomCode)}/meta`, {
                 method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'ngrok-skip-browser-warning': 'true'
+                },
                 body: JSON.stringify({ lat: metaCoordenadas[0], lon: metaCoordenadas[1] })
             });
             log("Meta sincronizada con el servidor.", "info");
@@ -88,10 +91,48 @@ if ("geolocation" in navigator) {
 }
 
 const corredores = {};
+
+// --- Encuadre automático ---
+// El mapa arrancaba fijo en el campus. Con GPS real el corredor está en su ubicación verdadera
+// (a veces a km del campus), así que el marcador SÍ existía pero quedaba fuera de la vista.
+let autoEncuadre = true;
+let ajusteProgramatico = false;
+
+function encuadrarCorredores(forzar) {
+    if (!autoEncuadre && !forzar) return;
+    const puntos = Object.values(corredores).map(c => c.marker.getLatLng());
+    if (puntos.length === 0) return;
+    puntos.push(L.latLng(metaCoordenadas[0], metaCoordenadas[1]));   // incluye la meta
+    ajusteProgramatico = true;
+    map.fitBounds(L.latLngBounds(puntos), { padding: [80, 80], maxZoom: 18, animate: true });
+    setTimeout(() => { ajusteProgramatico = false; }, 800);
+}
+
+// Si el host mueve o hace zoom al mapa a mano, dejamos de re-encuadrar solos
+map.on('dragstart', () => { autoEncuadre = false; actualizarBotonEncuadre(); });
+map.on('zoomstart', () => { if (!ajusteProgramatico) { autoEncuadre = false; actualizarBotonEncuadre(); } });
+
+const controlEncuadre = L.control({ position: 'bottomright' });
+controlEncuadre.onAdd = function () {
+    const btn = L.DomUtil.create('button', 'btn btn-secondary');
+    btn.type = 'button';
+    btn.id = 'btnEncuadre';
+    btn.style.cssText = 'width:auto;padding:0.45rem 0.8rem;font-size:0.8rem;cursor:pointer;';
+    L.DomEvent.disableClickPropagation(btn);
+    L.DomEvent.on(btn, 'click', () => { autoEncuadre = true; actualizarBotonEncuadre(); encuadrarCorredores(true); });
+    return btn;
+};
+controlEncuadre.addTo(map);
+function actualizarBotonEncuadre() {
+    const btn = document.getElementById('btnEncuadre');
+    if (btn) btn.textContent = autoEncuadre ? '🎯 Siguiendo corredores' : '🎯 Centrar en corredores';
+}
+actualizarBotonEncuadre();
 let stompClient = null;
 let hostNameDeLaSala = null;
 let ultimoRosterConocido = [];
 let carreraTerminada = false;
+let ultimoEstadoLogueado = null;
 
 const statusDisplay = document.getElementById('status');
 const hostStatusBadge = document.getElementById('hostStatusBadge');
@@ -100,6 +141,111 @@ const runnersList = document.getElementById('runnersList');
 const raceStatusValue = document.getElementById('raceStatusValue');
 const btnStartRaceDashboard = document.getElementById('btnStartRaceDashboard');
 const eventLog = document.getElementById('eventLog');
+
+// --- Estilos de los marcadores de vehículo en el mapa ---
+(function inyectarEstilosCarros() {
+    if (document.getElementById('ecirace-car-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'ecirace-car-styles';
+    style.textContent = `
+        .vehicle-marker {
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+        }
+        .vehicle-marker .vehicle-label {
+            position: absolute;
+            left: 50%;
+            bottom: 100%;
+            transform: translateX(-50%);
+            margin-bottom: 2px;
+            background: rgba(15, 23, 42, 0.9);
+            color: #00f5d4;
+            border: 1px solid #00f5d4;
+            font-family: monospace;
+            font-size: 11px;
+            font-weight: bold;
+            padding: 2px 6px;
+            border-radius: 6px;
+            white-space: nowrap;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.6);
+            pointer-events: none;
+        }
+        .vehicle-marker .vehicle-label.suspicious {
+            background: rgba(220, 38, 38, 0.95);
+            color: #fff;
+            border-color: #fff;
+        }
+        .vehicle-marker .vehicle-img {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            filter: drop-shadow(0 3px 4px rgba(0,0,0,0.65));
+            transition: transform 0.3s linear;
+        }
+        .vehicle-marker.suspicious .vehicle-img {
+            filter: drop-shadow(0 0 6px #dc2626) drop-shadow(0 0 2px #fff);
+        }
+        .runner-thumb {
+            width: 22px;
+            height: 22px;
+            object-fit: contain;
+            vertical-align: middle;
+            margin-right: 6px;
+        }
+    `;
+    document.head.appendChild(style);
+})();
+
+// --- Catálogo: valor del enum VehicleType (lo que elige el Lobby) -> imagen en /img ---
+const VEHICULO_POR_DEFECTO = 'RENAULT_4';
+const CATALOGO_VEHICULOS = {
+    'RENAULT_4':       '/img/renault.png',
+    'CHEVROLET_SPARK': '/img/spark.png',
+    'MAZDA_323':       '/img/mazda.png'
+};
+const TAMANO_ICONO = 48; // px
+
+// Devuelve siempre una clave válida del catálogo (nunca un emoji ni un valor raro)
+function resolverVehiculo(ubication) {
+    const candidatos = [ubication.car, ubication.vehicleType];
+    for (const c of candidatos) {
+        const key = String(c || '').trim().toUpperCase();
+        if (CATALOGO_VEHICULOS[key]) return key;
+    }
+    return VEHICULO_POR_DEFECTO;
+}
+
+function escaparHtml(txt) {
+    return String(txt).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+
+// Rumbo (0° = norte) entre dos puntos; las imágenes miran hacia arriba (norte)
+function calcularRumbo(lat1, lon1, lat2, lon2) {
+    const rad = Math.PI / 180;
+    const dLon = (lon2 - lon1) * rad;
+    const y = Math.sin(dLon) * Math.cos(lat2 * rad);
+    const x = Math.cos(lat1 * rad) * Math.sin(lat2 * rad) -
+        Math.sin(lat1 * rad) * Math.cos(lat2 * rad) * Math.cos(dLon);
+    return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+function crearIconoCarro(id, vehiculoKey, isSuspicious, rumbo) {
+    const src = CATALOGO_VEHICULOS[vehiculoKey] || CATALOGO_VEHICULOS[VEHICULO_POR_DEFECTO];
+    const etiqueta = isSuspicious ? `🚨 ${escaparHtml(id)}` : escaparHtml(id);
+    return L.divIcon({
+        className: 'vehicle-marker' + (isSuspicious ? ' suspicious' : ''),
+        html: `
+            <span class="vehicle-label${isSuspicious ? ' suspicious' : ''}">${etiqueta}</span>
+            <img class="vehicle-img" src="${src}" alt="${escaparHtml(id)}"
+                 style="transform: rotate(${rumbo || 0}deg);">
+        `,
+        iconSize: [TAMANO_ICONO, TAMANO_ICONO],
+        iconAnchor: [TAMANO_ICONO / 2, TAMANO_ICONO / 2],
+        popupAnchor: [0, -TAMANO_ICONO / 2]
+    });
+}
 
 function log(msg, type = 'info') {
     const entry = document.createElement('div');
@@ -129,11 +275,6 @@ function conectarWebSocket() {
             actualizarMapaYLista(ubication);
         });
 
-        stompClient.subscribe('/topic/broadcast', function (mensaje) {
-            const ubication = JSON.parse(mensaje.body);
-            if ((ubication.roomCode || 'CAMPUS-ECI').toUpperCase() === roomCode) actualizarMapaYLista(ubication);
-        });
-
         stompClient.subscribe('/topic/rooms/' + roomCode + '/status', function (mensaje) {
             aplicarEstadoDeSala(JSON.parse(mensaje.body));
         });
@@ -147,12 +288,14 @@ function conectarWebSocket() {
     });
 }
 
+// 🚀 3. Actualización del mapa usando el carro de cada corredor
 function actualizarMapaYLista(ubication) {
     const id = ubication.runnerId;
     const lat = ubication.latitude;
     const lon = ubication.longitude;
     const speed = (ubication.speed !== undefined) ? ubication.speed : 0.0;
     const isSuspicious = ubication.suspicious === true;
+    const vehiculo = resolverVehiculo(ubication);
 
     if (lat === undefined || lon === undefined || !id) return;
 
@@ -160,63 +303,85 @@ function actualizarMapaYLista(ubication) {
         log(`🚨 [ANTI-CHEAT] ¡Comportamiento sospechoso en ${id}! Velocidad: ${speed.toFixed(1)} km/h`, 'error');
     }
 
-    const cssClass = isSuspicious ? 'car-marker-alert' : 'car-marker';
-    const customIcon = L.divIcon({ className: cssClass, iconSize: [16, 16] });
-
     if (corredores[id]) {
-        corredores[id].marker.setLatLng([lat, lon]);
-        if (corredores[id].suspicious !== isSuspicious) {
-            corredores[id].marker.setIcon(customIcon);
+        const c = corredores[id];
+        const previo = c.marker.getLatLng();
+        // Solo recalculamos el rumbo si el carro se movió lo suficiente (evita saltos por ruido GPS)
+        const movio = map.distance(previo, [lat, lon]) > 1.0;
+        const rumbo = movio ? calcularRumbo(previo.lat, previo.lng, lat, lon) : c.rumbo;
+
+        c.marker.setLatLng([lat, lon]);
+        if (c.suspicious !== isSuspicious || c.car !== vehiculo || c.rumbo !== rumbo) {
+            c.marker.setIcon(crearIconoCarro(id, vehiculo, isSuspicious, rumbo));
         }
-        corredores[id].speed = speed;
-        corredores[id].suspicious = isSuspicious;
+        c.speed = speed;
+        c.suspicious = isSuspicious;
+        c.car = vehiculo;
+        c.rumbo = rumbo;
     } else {
-        const nuevoMarcador = L.marker([lat, lon], { icon: customIcon }).addTo(map);
-        corredores[id] = { marker: nuevoMarcador, speed: speed, suspicious: isSuspicious };
+        const nuevoMarcador = L.marker([lat, lon], {
+            icon: crearIconoCarro(id, vehiculo, isSuspicious, 0),
+            zIndexOffset: 1000
+        }).addTo(map);
+        corredores[id] = {
+            marker: nuevoMarcador,
+            speed: speed,
+            suspicious: isSuspicious,
+            car: vehiculo,
+            rumbo: 0
+        };
+        log(`🚗 ${id} apareció en el mapa (${lat.toFixed(5)}, ${lon.toFixed(5)})`, 'info');
     }
+    encuadrarCorredores(false);
 
     const alertTag = isSuspicious ? " <span style='color:red;'>🚨 [ANOMALÍA]</span>" : "";
     corredores[id].marker.bindPopup(`
         <div style="font-family: monospace;">
-            <strong>🏎️ ${id}</strong>${alertTag}<br>
+            <img src="${CATALOGO_VEHICULOS[vehiculo]}" class="runner-thumb" alt="">
+            <strong>${escaparHtml(id)}</strong>${alertTag}<br>
             Velocidad: ${speed.toFixed(1)} km/h<br>
-            Sala: ${roomCode}
+            Sala: ${escaparHtml(roomCode)}
         </div>
     `);
-    if (!carreraTerminada && raceStatusValue && raceStatusValue.textContent === 'IN_PROGRESS') {
-        const distanciaAMeta = map.distance([lat, lon], metaCoordenadas);
 
-        if (distanciaAMeta <= 15.0) { // Si toca el círculo dorado (margen de 3 metros)
-            log(`🏁 ¡El radar detectó que ${id} tocó la meta! Forzando victoria...`, 'info');
-
-            aplicarEstadoDeSala({
-                status: 'FINISHED',
-                hostName: hostNameDeLaSala,
-                activeRunners: ultimoRosterConocido,
-                winnerId: id
-            });
-        }
-    }
+    // La meta y el ganador los decide el servidor (GameLoopService) y llegan por /status.
 
     renderizarListaCorredores();
 }
 
+// Recupera la última posición de cada corredor (por si el tablero se abrió tarde o el corredor está quieto)
+async function cargarPosicionesConocidas() {
+    try {
+        const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}/positions`, {
+            headers: { 'ngrok-skip-browser-warning': 'true', 'Accept': 'application/json' }
+        });
+        if (!res.ok) return;
+        const lista = await res.json();
+        lista.forEach(u => { if (u && u.runnerId && !corredores[u.runnerId]) actualizarMapaYLista(u); });
+    } catch (e) { /* se reintenta en el siguiente ciclo */ }
+}
+
 async function refrescarRosterDeSala() {
     try {
-        const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}`);
+        const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}`, {
+            headers: {
+                'ngrok-skip-browser-warning': 'true',
+                'Accept': 'application/json'
+            }
+        });
         if (res.ok) aplicarEstadoDeSala(await res.json());
     } catch (e) {
         console.warn('No se pudo refrescar el roster.');
     }
 }
 
-// 🚀 LÓGICA DE ESTADO COMPLETAMENTE LIMPIA Y REORGANIZADA
-// 🚀 LÓGICA DE ESTADO BLINDADA
 function aplicarEstadoDeSala(room) {
     hostNameDeLaSala = room.hostName;
-    log(`👥 Sala ${roomCode} | Estado: ${room.status}`, 'info');
+    if (room.status !== ultimoEstadoLogueado) {
+        log(`👥 Sala ${roomCode} | Estado: ${room.status}`, 'info');
+        ultimoEstadoLogueado = room.status;
+    }
 
-    // 1. EL TRUCO CLAVE: Resetear variables si la sala vuelve a espera o inicia una nueva carrera
     if (room.status === 'WAITING' || room.status === 'IN_PROGRESS') {
         carreraTerminada = false;
         const oldBanner = document.getElementById('victoryBannerDash');
@@ -226,7 +391,7 @@ function aplicarEstadoDeSala(room) {
     if (room.status === 'IN_PROGRESS') {
         raceStatusValue.style.color = 'var(--color-teal)';
     } else if (room.status === 'FINISHED') {
-        raceStatusValue.style.color = '#FFD700'; // Dorado
+        raceStatusValue.style.color = '#FFD700';
     } else {
         raceStatusValue.style.color = 'var(--color-amber)';
     }
@@ -238,6 +403,9 @@ function aplicarEstadoDeSala(room) {
 
     ultimoRosterConocido = room.activeRunners || [];
     renderizarListaCorredores();
+    if (room.status === 'IN_PROGRESS' && ultimoRosterConocido.some(r => !corredores[r])) {
+        cargarPosicionesConocidas();
+    }
 
     if (room.status === 'FINISHED' && !carreraTerminada) {
         carreraTerminada = true;
@@ -272,7 +440,10 @@ btnStartRaceDashboard.addEventListener('click', async () => {
     try {
         const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}/start`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'ngrok-skip-browser-warning': 'true'
+            },
             body: JSON.stringify({
                 hostName: hostNameDeLaSala,
                 metaLat: metaCoordenadas[0],
@@ -288,6 +459,7 @@ btnStartRaceDashboard.addEventListener('click', async () => {
     }
 });
 
+// 🚀 4. Lista lateral mostrando el carro de cada corredor
 function renderizarListaCorredores() {
     activeCountDisplay.innerText = `${ultimoRosterConocido.length} / 6`;
     if (ultimoRosterConocido.length === 0) {
@@ -298,11 +470,15 @@ function renderizarListaCorredores() {
     ultimoRosterConocido.forEach(id => {
         const transmitiendo = corredores[id] !== undefined;
         const alertColor = (transmitiendo && corredores[id].suspicious) ? 'var(--color-alert)' : (transmitiendo ? 'var(--color-teal)' : 'var(--text-muted)');
-        const alertIcon = transmitiendo ? (corredores[id].suspicious ? '🚨' : '🏎️') : '🟡';
+        const icono = transmitiendo
+            ? (corredores[id].suspicious
+                ? '🚨'
+                : `<img class="runner-thumb" src="${CATALOGO_VEHICULOS[corredores[id].car]}" alt="">`)
+            : '🟡';
         const valueText = transmitiendo ? `${corredores[id].speed.toFixed(1)} km/h` : 'En sala';
         const item = document.createElement('div');
         item.className = 'runner-item';
-        item.innerHTML = `<span>${alertIcon} ${id}</span><span style="color: ${alertColor};">${valueText}</span>`;
+        item.innerHTML = `<span>${icono} ${escaparHtml(id)}</span><span style="color: ${alertColor};">${valueText}</span>`;
         runnersList.appendChild(item);
     });
 }
