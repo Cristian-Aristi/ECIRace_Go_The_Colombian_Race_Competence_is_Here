@@ -1,0 +1,11 @@
+apiVersion: 1
+providers:
+  - name: ARSW k6 summaries
+    orgId: 1
+    folder: ARSW Docente
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 10
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioning/k6-dashboards
