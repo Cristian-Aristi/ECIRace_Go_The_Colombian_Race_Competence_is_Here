@@ -1,0 +1,104 @@
+name: ECIRace GO - CD Azure
+
+# 1) Cada push a main / sprint8 compila, prueba y publica la imagen en GitHub Container Registry
+# 2) Si existen los secretos de Azure, despliega la nueva imagen en la Container App.
+# 3) Todas las noches (23:00 Bogotá) apaga el despliegue por si alguien lo dejó encendido.
+
+on:
+  push:
+    branches: [ "main", "sprint8" ]
+  workflow_dispatch:
+    inputs:
+      accion:
+        description: 'Acción manual sobre Azure'
+        type: choice
+        options: [ release, up, standby, down, status ]
+        default: status
+  schedule:
+    - cron: '0 4 * * *'   # 04:00 UTC = 23:00 en Bogotá
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/ecirace-go
+  RG: rg-ecirace-arsw
+
+jobs:
+  imagen:
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.accion == 'release')
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Pruebas
+        run: mvn -B clean test
+
+      - id: meta
+        name: Nombre de la imagen (GHCR exige minúsculas)
+        run: |
+          IMG=$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')
+          echo "img=$IMG" >> "$GITHUB_OUTPUT"
+          echo "tag=$IMG:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.img }}:latest
+
+  desplegar:
+    needs: imagen
+    runs-on: ubuntu-latest
+    steps:
+      - id: hay
+        name: ¿Hay credenciales de Azure?
+        env:
+          CREDS: ${{ secrets.AZURE_CREDENTIALS }}
+        run: echo "ok=$([ -n "$CREDS" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - if: steps.hay.outputs.ok == 'true'
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - if: steps.hay.outputs.ok == 'true'
+        name: Nueva revisión con la imagen recién publicada
+        run: az containerapp update -g "$RG" -n ecirace-app --image "${{ needs.imagen.outputs.tag }}" --only-show-errors -o none
+      - if: steps.hay.outputs.ok != 'true'
+        run: echo "Sin secreto AZURE_CREDENTIALS. Despliegue manual con python scripts/azure.py release ${{ needs.imagen.outputs.tag }}"
+
+  operar:
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.accion != 'release')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: hay
+        env:
+          CREDS: ${{ secrets.AZURE_CREDENTIALS }}
+        run: echo "ok=$([ -n "$CREDS" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - if: steps.hay.outputs.ok == 'true'
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - if: steps.hay.outputs.ok == 'true'
+        name: Ejecutar scripts/azure.py
+        run: |
+          python scripts/azure.py --rg "$RG" ${{ github.event_name == 'schedule' && 'down' || inputs.accion }}
+      - if: steps.hay.outputs.ok != 'true'
+        run: echo "Sin secreto AZURE_CREDENTIALS; el apagado nocturno no se ejecuta."

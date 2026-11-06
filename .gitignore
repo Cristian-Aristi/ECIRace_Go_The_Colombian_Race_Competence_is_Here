@@ -31,3 +31,7 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Azure (Sprint 8) ###
+azure/.azure.json
+monitoring/prometheus-azure.yml
