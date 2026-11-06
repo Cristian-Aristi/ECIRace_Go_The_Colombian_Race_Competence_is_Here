@@ -6,7 +6,7 @@ name: ECIRace GO - CD Azure
 
 on:
   push:
-    branches: [ "main", "sprint8" ]
+    branches: [ "main", "despliegueSprint8" ]
   workflow_dispatch:
     inputs:
       accion:
