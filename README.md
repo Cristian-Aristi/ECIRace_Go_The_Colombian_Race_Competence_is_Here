@@ -55,7 +55,7 @@ El proyecto se centra en los problemas clásicos de la asignatura: **concurrenci
 | Integrante | GitHub |
 |---|---|
 | **Cristian Andrés Aristizábal Parra** | [@Cristian-Aristi](https://github.com/Cristian-Aristi) |
-| **Santiago Andrés Pinzón Torres** | — |
+| **Santiago Andrés Pinzón Torres** | els4nty |
 
 Gestión del proyecto en **Azure DevOps** (Boards por sprint) y código en **GitHub**.
 
