@@ -371,6 +371,6 @@ El detalle de historias de usuario (con criterios Gherkin) y tareas está en el 
 
 <div align="center">
 
-Hecho con ☕ y concurrencia en la **Escuela Colombiana de Ingeniería Julio Garavito** · ARSW 2026-2
+Hecho con concurrencia en la **Escuela Colombiana de Ingeniería Julio Garavito** · ARSW 2026-2
 
 </div>
