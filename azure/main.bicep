@@ -166,7 +166,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           image: image
           resources: { cpu: json(cpu), memory: memory }
           env: concat([
-            { name: 'SPRING_PROFILES_ACTIVE', value: 'azure' }
+            { name: 'SPRING_PROFILES_ACTIVE', value: 'cloud' }
           ], dbEnv)
           probes: [
             {
