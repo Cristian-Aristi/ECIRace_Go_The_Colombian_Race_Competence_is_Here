@@ -32,3 +32,8 @@ build/
 ### VS Code ###
 .vscode/
 
+
+### Despliegue en AWS (Sprint 8) ###
+deploy/aws/.aws-deploy.json
+monitoring/prometheus-cloud.yml
+__pycache__/
