@@ -12,7 +12,7 @@
 ![Prometheus](https://img.shields.io/badge/Prometheus-3.7-E6522C?logo=prometheus&logoColor=white)
 ![Grafana](https://img.shields.io/badge/Grafana-12.2-F46800?logo=grafana&logoColor=white)
 ![k6](https://img.shields.io/badge/k6-1.3-7D64FF?logo=k6&logoColor=white)
-![Azure](https://img.shields.io/badge/Azure-Container%20Apps-0078D4?logo=microsoftazure&logoColor=white)
+![AWS](https://img.shields.io/badge/AWS-EC2%20%C2%B7%20CloudFormation-FF9900?logo=amazonwebservices&logoColor=white)
 
 Proyecto del curso **Arquitecturas de Software (ARSW)** · Escuela Colombiana de Ingeniería Julio Garavito · 2026-2
 
@@ -34,7 +34,7 @@ Proyecto del curso **Arquitecturas de Software (ARSW)** · Escuela Colombiana de
 10. [Pruebas](#-pruebas)
 11. [Observabilidad y pruebas de rendimiento](#-observabilidad-y-pruebas-de-rendimiento)
 12. [Integración y entrega continua](#-integración-y-entrega-continua)
-13. [Despliegue en Azure](#️-despliegue-en-azure)
+13. [Despliegue en AWS](#️-despliegue-en-aws)
 14. [Gestión del proyecto (Sprints)](#-gestión-del-proyecto-sprints)
 
 ---
@@ -117,13 +117,13 @@ flowchart LR
 | Capa | Tecnologías |
 |---|---|
 | Backend | Java 21, Spring Boot 4.1.1 (Web MVC, WebSocket/STOMP, Data JPA, Actuator) |
-| Persistencia | H2 en memoria (local) · PostgreSQL Flexible Server (Azure) |
+| Persistencia | H2 en memoria (local) · PostgreSQL 16 (AWS) |
 | Frontend | HTML, CSS y JavaScript, Leaflet, STOMP sobre WebSocket nativo y SockJS |
 | Observabilidad | Micrometer, Prometheus 3.7, Grafana 12.2, sonda de disponibilidad en Python |
 | Rendimiento | k6 1.3 (API REST y carreras completas por WebSocket) |
 | Contenedores | Docker multi-stage (Maven → JRE Alpine), Docker Compose |
 | CI/CD | GitHub Actions, GitHub Container Registry, Azure DevOps Pipelines |
-| Nube | Azure Container Apps, Azure Database for PostgreSQL, Log Analytics, Bicep |
+| Nube | AWS EC2 (Learner Lab), CloudFormation, Caddy (TLS automático), SSM |
 
 ## 📂 Estructura del repositorio
 
@@ -141,7 +141,7 @@ flowchart LR
 ├── src/main/resources/
 │   ├── static/          # index, lobby, runner y dashboard (HTML, JS, CSS, imágenes)
 │   ├── application.properties         # Configuración local (H2)
-│   └── application-azure.properties   # Perfil de nube (PostgreSQL)
+│   └── application-cloud.properties   # Perfil de nube (PostgreSQL por variables)
 ├── src/test/java/...    # Pruebas de anti-trampa, salas, game loop, auth, observabilidad y laboratorio
 ├── monitoring/          # Prometheus, Grafana (datasource y tableros) y sonda
 ├── k6/                  # tests.js (laboratorio) · proyecto.js (todo ECIRace)
@@ -149,12 +149,12 @@ flowchart LR
 ├── results/             # Evidencia de las ejecuciones de k6
 ├── scripts/
 │   ├── lab.py           # Automatiza el laboratorio de observabilidad y rendimiento
-│   └── azure.py         # Despliega y enciende, pone en espera o apaga el entorno en Azure
-├── azure/               # Infraestructura como código (main.bicep, budget.bicep)
-├── .github/workflows/   # ci.yml · cd-azure.yml
+│   └── aws.py           # Despliega, enciende y apaga el entorno en AWS
+├── deploy/aws/          # CloudFormation, Docker Compose de producción, Caddyfile y bootstrap
+├── .github/workflows/   # ci.yml · cd.yml
 ├── Dockerfile           # Imagen multi-stage del servidor
 ├── docker-compose.yml   # Servidor + Prometheus + Grafana + sonda + k6
-├── docker-compose.azure.yml  # Observabilidad local apuntando a Azure
+├── docker-compose.cloud.yml  # Observabilidad local apuntando a la nube
 ├── azure-pipelines.yml  # Pipeline de Azure DevOps
 └── CONSULTAS.md         # Guía de consultas PromQL de los tableros
 ```
@@ -168,7 +168,7 @@ flowchart LR
 | JDK | 21 | Compilar y ejecutar el servidor |
 | Maven | 3.9+ (o el wrapper `mvnw` incluido) | Construcción |
 | Docker y Docker Compose v2 | Recientes | Contenedores y observabilidad |
-| Python | 3.10+ | `scripts/lab.py` y `scripts/azure.py` |
+| Python | 3.10+ | `scripts/lab.py` y `scripts/aws.py` |
 | ngrok *(opcional)* | — | HTTPS para probar con celulares en local |
 
 ### Opción 1: Maven (desarrollo)
@@ -256,7 +256,7 @@ Abre la URL `https://...ngrok...` en el computador y en los celulares. El client
 
 | Tipo | Destino | Descripción |
 |---|---|---|
-| Endpoint | `/race-ws-native` | WebSocket nativo (producción, ngrok, Azure) |
+| Endpoint | `/race-ws-native` | WebSocket nativo (producción, ngrok, AWS) |
 | Endpoint | `/race-ws` | WebSocket con SockJS (compatibilidad local) |
 | Envío | `/app/telemetry` | Posición GPS del corredor |
 | Suscripción | `/topic/rooms/{code}` | Telemetría aceptada de la sala |
@@ -316,41 +316,64 @@ python scripts/lab.py fault               # simula una falla de 30 s (modo labor
 | Pipeline | Disparador | Qué hace |
 |---|---|---|
 | `.github/workflows/ci.yml` | push / PR a `main` | Compila y ejecuta las pruebas con JDK 21 |
-| `.github/workflows/cd-azure.yml` | push a `main` / rama del sprint | Ejecuta las pruebas, publica la imagen en **GHCR** (`ghcr.io/cristian-aristi/ecirace-go`) y, si existen credenciales, despliega en Azure. Cada noche apaga el entorno. |
+| `.github/workflows/cd.yml` | push a `main` / rama del sprint | Ejecuta las pruebas y publica la imagen en **GHCR** (`ghcr.io/cristian-aristi/ecirace-go`, etiquetas `sha-<commit>` y `latest`) |
 | `azure-pipelines.yml` | push a `main` | Compilación, pruebas y construcción de la imagen en Azure DevOps |
 
-## ☁️ Despliegue en Azure
+## ☁️ Despliegue en AWS
 
-La aplicación se despliega en **Azure Container Apps** (plan Consumption) con **PostgreSQL Flexible Server B1ms**. Toda la infraestructura está descrita como código en [`azure/main.bicep`](azure/main.bicep).
+> **¿Por qué AWS y no Azure?** El Sprint 8 se diseñó primero sobre Azure Container Apps. No pudimos usarlo porque la cuenta de la Escuela no tenía créditos de Azure (Azure for Students no se podía renovar) y la universidad nos asignó **AWS Academy Learner Lab**. El diseño de Azure quedó en el historial de commits. Como el código solo depende del perfil `cloud`, el cambio de nube no tocó la aplicación.
+
+La aplicación corre en **una instancia EC2** con Docker Compose. Toda la infraestructura está descrita como código en [`deploy/aws/cloudformation.yaml`](deploy/aws/cloudformation.yaml).
 
 ```mermaid
 flowchart LR
-    U["📱 Celulares / 💻 Tablero"] -- "HTTPS + WSS" --> CA["Azure Container Apps<br/>ecirace-app · 1 réplica · escala a cero"]
-    CA --> PG[("PostgreSQL B1ms")]
-    CA -. logs .-> LA["Log Analytics<br/>tope 0.1 GB/día"]
-    GH["GitHub Actions"] -- imagen --> GHCR["GHCR"] --> CA
+    U["📱 Celulares / 💻 Tablero"] -- "HTTPS + WSS<br/>&lt;ip&gt;.sslip.io" --> C
+    subgraph EC2["EC2 t3.small · Amazon Linux 2023 · IP elástica"]
+        C["Caddy<br/>TLS Let's Encrypt"] --> A["ECIRace GO<br/>perfil cloud"]
+        A --> PG[("PostgreSQL 16<br/>red interna")]
+    end
+    GH["GitHub Actions"] -- imagen --> GHCR["GHCR"] -- "docker compose pull" --> A
 ```
 
-- **HTTPS administrado**, necesario para el GPS del celular. Reemplaza a ngrok.
-- **Escala a cero**: no consume cómputo mientras nadie la usa.
-- **Presupuesto mensual con alertas** por correo (`azure/budget.bicep`).
-- **Imagen en GitHub Container Registry**, sin costo fijo de registro.
+| Decisión | Motivo |
+|---|---|
+| **EC2 + Docker Compose** | App Runner no soporta WebSockets. Un balanceador (ALB) necesita dominio propio para el certificado y cobra aunque nadie lo use. |
+| **Caddy + `sslip.io`** | El GPS del celular exige HTTPS. Caddy obtiene el certificado de Let's Encrypt sin comprar dominio. |
+| **IP elástica** | La URL no cambia al encender y apagar, y Caddy no pide un certificado nuevo cada vez. |
+| **Una sola instancia** | Las salas, el game loop y el broker STOMP viven en memoria. |
+| **PostgreSQL en contenedor** | Evita el costo fijo de RDS. Vive en una red interna sin puertos expuestos. Su clave se genera dentro de la instancia y nunca sale de ella. |
+| **Sin puerto 22** | Se administra por SSM (`LabInstanceProfile`). Además, IMDSv2 es obligatorio y el disco está cifrado. |
+| **Actuator cerrado** | Solo se exponen `/actuator/health` y `/actuator/prometheus`, este último con usuario y contraseña. `/admin` y `/h2-console` responden 404. |
 
-**Operación con `scripts/azure.py`** (requiere [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) y `az login`):
+El CD (`.github/workflows/cd.yml`) solo publica la imagen. Learner Lab entrega **credenciales temporales**, así que el despliegue se hace desde el equipo con `scripts/aws.py`.
+
+### Paso a paso
+
+1. **Iniciar el laboratorio.** En AWS Academy, entra a **Learner Lab → Start Lab** y espera a que el indicador se ponga en verde.
+2. **Configurar credenciales** (en cada sesión). Ve a **AWS Details → AWS CLI → Show** y copia el bloque en `~/.aws/credentials` (en Windows: `%UserProfile%\.aws\credentials`). Necesitas [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html).
+3. **Desplegar** (la primera vez tarda ~5 min):
 
 ```bash
-python scripts/azure.py deploy --location eastus2 --email <correo>   # crea o actualiza todo (~10 min)
-python scripts/azure.py up        # demo o clase: réplica caliente
-python scripts/azure.py standby   # desarrollo: duerme y despierta con la primera visita
-python scripts/azure.py down      # apagado total: sin URL pública y PostgreSQL detenido
-python scripts/azure.py status    # estado, réplicas y base de datos
-python scripts/azure.py release ghcr.io/cristian-aristi/ecirace-go:sha-xxxxxxx
-python scripts/azure.py monitor up   # Grafana local leyendo las métricas de Azure
-python scripts/azure.py k6 carga     # pruebas de carga contra la URL de Azure
-python scripts/azure.py destroy      # elimina todos los recursos
+python scripts/aws.py check       # verifica credenciales y región (us-east-1)
+python scripts/aws.py deploy      # crea o actualiza todo e imprime la URL https://<ip>.sslip.io
 ```
 
-> 💡 Usar `up` antes de una demo y **siempre `down` al terminar**: así solo se consumen créditos cuando la aplicación se está usando.
+### Operación diaria
+
+```bash
+python scripts/aws.py up          # antes de clase o demo: enciende y descarga la última imagen
+python scripts/aws.py down        # al terminar: sin costo de cómputo (URL y datos se conservan)
+python scripts/aws.py status      # estado de la instancia, URL y salud
+python scripts/aws.py release     # aplica la última imagen publicada sin apagar (SSM)
+python scripts/aws.py logs app    # últimas líneas de app | caddy | postgres
+python scripts/aws.py monitor up  # Grafana local con las métricas de AWS
+python scripts/aws.py k6 carga    # pruebas de carga contra la URL pública
+python scripts/aws.py destroy     # elimina toda la infraestructura
+```
+
+> 💡 Usa `up` antes de una demo y **siempre `down` al terminar**. Learner Lab también detiene la instancia al cerrar la sesión, pero lo que quede encendido consume créditos del laboratorio.
+>
+> 🔐 El archivo `deploy/aws/.aws-deploy.json` guarda la contraseña de métricas. Está en `.gitignore`: compártelo solo por privado con quien vaya a operar el despliegue.
 
 ## 📅 Gestión del proyecto (Sprints)
 
@@ -363,7 +386,7 @@ python scripts/azure.py destroy      # elimina todos los recursos
 | **5** | 5–10 oct | Game loop de 100 ms, línea de meta, colisiones, ganador único e interfaz de resultados · **Release 1** |
 | **6** | 19–24 oct | Estabilización del Release 1, catálogo visual de vehículos, conectividad robusta (WebSocket nativo, *heartbeats*, reconexión) |
 | **7** | 26–31 oct | Observabilidad: Actuator y Prometheus, modo laboratorio, Grafana, sonda y pruebas de rendimiento con k6 |
-| **8** | 2–7 nov | Despliegue en Azure: infraestructura como código, entrega continua a GHCR y operación con control de créditos |
+| **8** | 2–7 nov | Despliegue en la nube: diseño inicial en Azure y migración a AWS Learner Lab (EC2, Caddy, CloudFormation), entrega continua a GHCR y operación con control de créditos |
 
 El detalle de historias de usuario (con criterios Gherkin) y tareas está en el tablero de **Azure DevOps** del proyecto.
 
