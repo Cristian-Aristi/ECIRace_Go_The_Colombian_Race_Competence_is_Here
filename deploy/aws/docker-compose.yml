@@ -1,0 +1,79 @@
+# ECIRace GO en AWS (EC2). Lo ejecuta deploy/aws/bootstrap.sh en cada arranque de la instancia.
+# Variables (las escribe bootstrap.sh en /opt/ecirace/.env, permisos 600):
+#   APP_IMAGE    imagen del servidor publicada en GHCR
+#   DB_PASSWORD  generada en la propia instancia la primera vez; nunca sale de ella
+#   DOMAIN       <ip-pública>.sslip.io, para que Caddy obtenga el certificado TLS
+name: ecirace
+
+x-defaults: &defaults
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  postgres:
+    <<: *defaults
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ecirace
+      POSTGRES_USER: ecirace
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD no definida}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ecirace -d ecirace"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 256m
+    networks: [backend]
+
+  app:
+    <<: *defaults
+    image: ${APP_IMAGE:?APP_IMAGE no definida}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: cloud
+      DB_URL: jdbc:postgresql://postgres:5432/ecirace
+      DB_DRIVER: org.postgresql.Driver
+      DB_USER: ecirace
+      DB_PASSWORD: ${DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health/readiness | grep -q UP"]
+      interval: 15s
+      timeout: 5s
+      start_period: 90s
+      retries: 5
+    mem_limit: 1g
+    # Sin puertos publicados: solo Caddy la alcanza por la red interna
+    networks: [backend, frontend]
+
+  caddy:
+    <<: *defaults
+    image: caddy:2.10-alpine
+    depends_on: [app]
+    ports:
+      - "80:80"       # reto HTTP-01 de Let's Encrypt y redirección a HTTPS
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN no definida}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./metrics_auth.caddy:/etc/caddy/metrics_auth.caddy:ro
+      - ./data/caddy:/data   # certificados: se conservan entre reinicios
+    mem_limit: 128m
+    networks: [frontend]
+
+networks:
+  # PostgreSQL vive en una red sin salida a internet ni puertos expuestos
+  backend:
+    internal: true
+  frontend: {}

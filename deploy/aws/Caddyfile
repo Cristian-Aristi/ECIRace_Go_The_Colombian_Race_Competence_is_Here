@@ -1,0 +1,49 @@
+# Proxy inverso de ECIRace GO en AWS.
+# - HTTPS automático con Let's Encrypt para {$DOMAIN} (<ip>.sslip.io): el GPS del navegador
+#   solo funciona en un contexto seguro.
+# - Los WebSockets (/race-ws-native, /race-ws) pasan sin configuración extra.
+# - Solo se expone lo que el juego necesita; Actuator queda cerrado salvo salud y métricas.
+{
+	admin off
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(self), camera=(), microphone=()"
+		-Server
+	}
+
+	# Salud: la usan scripts/aws.py y la sonda de disponibilidad
+	@health path /actuator/health /actuator/health/*
+	handle @health {
+		reverse_proxy app:8080
+	}
+
+	# Métricas para Prometheus: protegidas con usuario y contraseña (bcrypt)
+	@metrics path /actuator/prometheus
+	handle @metrics {
+		import /etc/caddy/metrics_auth.caddy
+		reverse_proxy app:8080
+	}
+
+	# Todo lo administrativo queda fuera de internet
+	@private path /actuator /actuator/* /admin /admin/* /h2-console /h2-console/*
+	handle @private {
+		respond 404
+	}
+
+	handle {
+		reverse_proxy app:8080
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
