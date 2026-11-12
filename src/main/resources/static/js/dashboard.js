@@ -52,6 +52,7 @@ map.on('click', async function(e) {
     if (raceStatusValue && raceStatusValue.textContent === 'WAITING' && settingMetaMode) {
         metaCoordenadas = [e.latlng.lat, e.latlng.lng];
         metaLayer.setLatLng(metaCoordenadas);
+        programarLeaderboard();
         L.popup()
             .setLatLng(e.latlng)
             .setContent("<b>🏁 ¡Meta Actualizada!</b><br>Puedes seguir haciendo clic para reubicarla o apagar el botón.")
@@ -347,6 +348,7 @@ function actualizarMapaYLista(ubication) {
     // La meta y el ganador los decide el servidor (GameLoopService) y llegan por /status.
 
     renderizarListaCorredores();
+    programarLeaderboard();
 }
 
 // Recupera la última posición de cada corredor (por si el tablero se abrió tarde o el corredor está quieto)
@@ -377,6 +379,18 @@ async function refrescarRosterDeSala() {
 
 function aplicarEstadoDeSala(room) {
     hostNameDeLaSala = room.hostName;
+    estadoCarrera = room.status;
+    ganadorId = room.winnerId || null;
+    if (room.radioMetaMetros) metaRadioM = room.radioMetaMetros;
+    // Con la carrera iniciada la meta oficial es la del servidor (si se recarga el tablero, la local
+    // sería la del campus por defecto y la tabla mediría contra un punto equivocado).
+    if (room.status !== 'WAITING' && room.metaLat != null && room.metaLon != null) {
+        const cambio = Math.abs(room.metaLat - metaCoordenadas[0]) > 1e-9 || Math.abs(room.metaLon - metaCoordenadas[1]) > 1e-9;
+        if (cambio) {
+            metaCoordenadas = [room.metaLat, room.metaLon];
+            metaLayer.setLatLng(metaCoordenadas);
+        }
+    }
     if (room.status !== ultimoEstadoLogueado) {
         log(`👥 Sala ${roomCode} | Estado: ${room.status}`, 'info');
         ultimoEstadoLogueado = room.status;
@@ -403,6 +417,7 @@ function aplicarEstadoDeSala(room) {
 
     ultimoRosterConocido = room.activeRunners || [];
     renderizarListaCorredores();
+    programarLeaderboard();
     if (room.status === 'IN_PROGRESS' && ultimoRosterConocido.some(r => !corredores[r])) {
         cargarPosicionesConocidas();
     }
@@ -489,6 +504,147 @@ document.getElementById('btnCopyRoom').addEventListener('click', () => {
 document.getElementById('btnShareLink').addEventListener('click', () => {
     navigator.clipboard.writeText(`${window.location.origin}/lobby.html?room=${encodeURIComponent(roomCode)}`).then(() => alert('🔗 Enlace copiado.'));
 });
+
+// ===================== 🏆 TABLA DE POSICIONES =====================
+// Ranking en vivo: el primero es quien está MÁS CERCA de la meta. Se calcula en el navegador con la última
+// posición de cada corredor (la que ya llega por WebSocket) y la meta de la sala. Cuando el servidor declara
+// un ganador (estado FINISHED) ese piloto queda primero, aunque ya no sea el más cercano.
+let estadoCarrera = 'WAITING';
+let ganadorId = null;
+let metaRadioM = 15;                 // se actualiza con room.radioMetaMetros
+let rankAnterior = {};               // id -> posición del render anterior (para las flechas ▲▼)
+let firmaAnterior = '';              // ids con señal del render anterior (si cambia, no hay flechas: no es un adelantamiento)
+const cambioRank = {};               // id -> { dir: 'up'|'down', hasta: timestamp }
+let lbPendiente = false;
+
+const lbBody = document.getElementById('lbBody');
+const lbFooter = document.getElementById('lbFooter');
+const lbPanel = document.getElementById('leaderboard');
+const lbToggle = document.getElementById('lbToggle');
+
+// En pantallas pequeñas arranca colapsada para no tapar el mapa
+if (window.matchMedia && window.matchMedia('(max-width: 760px)').matches) {
+    lbPanel.classList.add('collapsed');
+    lbToggle.setAttribute('aria-expanded', 'false');
+}
+lbToggle.addEventListener('click', () => {
+    const colapsada = lbPanel.classList.toggle('collapsed');
+    lbToggle.setAttribute('aria-expanded', String(!colapsada));
+});
+
+function formatearDistancia(m) {
+    if (!isFinite(m)) return '--';
+    return m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`;
+}
+
+function calcularClasificacion() {
+    const ids = ultimoRosterConocido.length > 0 ? ultimoRosterConocido.slice() : Object.keys(corredores);
+    const filas = ids.map(id => {
+        const c = corredores[id];
+        const distancia = c ? map.distance(c.marker.getLatLng(), metaCoordenadas) : Infinity;
+        return { id, c, distancia, conSenal: !!c,
+            ganador: estadoCarrera === 'FINISHED' && !!ganadorId && id.toLowerCase() === ganadorId.toLowerCase() };
+    });
+    // 1º el ganador oficial, luego por distancia a la meta, al final los que aún no transmiten
+    filas.sort((a, b) => {
+        if (a.ganador !== b.ganador) return a.ganador ? -1 : 1;
+        if (a.conSenal !== b.conSenal) return a.conSenal ? -1 : 1;
+        if (a.conSenal && a.distancia !== b.distancia) return a.distancia - b.distancia;
+        return a.id.localeCompare(b.id);
+    });
+    return filas;
+}
+
+const MEDALLAS = ['🥇', '🥈', '🥉'];
+
+function renderizarLeaderboard() {
+    lbPendiente = false;
+    const filas = calcularClasificacion();
+    if (filas.length === 0) {
+        lbBody.innerHTML = '<div class="lb-empty">Esperando corredores...</div>';
+        return;
+    }
+
+    const ahora = Date.now();
+    const nuevoRank = {};
+    // Solo hay flechas si el conjunto de corredores con señal es el mismo que en el render anterior;
+    // si entró o salió alguien, las posiciones se corren sin que haya habido un adelantamiento.
+    const firma = filas.filter(f => f.conSenal).map(f => f.id).sort().join('|');
+    const hayAdelantamientos = firma === firmaAnterior;
+    firmaAnterior = firma;
+    // Referencia para la diferencia "+X m": el corredor que está más cerca de la meta
+    const distMin = Math.min(...filas.filter(f => f.conSenal).map(f => f.distancia));
+    let proximaLimpieza = 0;
+
+    lbBody.innerHTML = '';
+    filas.forEach((f, i) => {
+        const pos = i + 1;
+        nuevoRank[f.id] = pos;
+        const previo = rankAnterior[f.id];
+        if (hayAdelantamientos && previo !== undefined && previo !== pos && f.conSenal) {
+            cambioRank[f.id] = { dir: pos < previo ? 'up' : 'down', hasta: ahora + 4000 };
+        }
+        const cambio = cambioRank[f.id];
+        let tendencia = '';
+        if (cambio && cambio.hasta > ahora) {
+            tendencia = cambio.dir === 'up'
+                ? '<span class="lb-trend-up" title="Subió de posición">▲</span>'
+                : '<span class="lb-trend-down" title="Bajó de posición">▼</span>';
+            proximaLimpieza = Math.max(proximaLimpieza, cambio.hasta - ahora);
+        }
+
+        const enMeta = f.conSenal && f.distancia <= metaRadioM;
+        const sospechoso = f.conSenal && f.c.suspicious;
+        const icono = f.conSenal
+            ? `<img src="${CATALOGO_VEHICULOS[f.c.car] || CATALOGO_VEHICULOS[VEHICULO_POR_DEFECTO]}" alt="">`
+            : '<span>🟡</span>';
+
+        let distHtml;
+        if (!f.conSenal) {
+            distHtml = '<div class="lb-dist" style="color: var(--text-muted);">Sin señal</div>';
+        } else if (f.ganador) {
+            distHtml = `<div class="lb-dist lb-finish">🏁 GANADOR<small>${formatearDistancia(f.distancia)}</small></div>`;
+        } else if (enMeta) {
+            distHtml = '<div class="lb-dist lb-finish">🏁 En meta</div>';
+        } else {
+            const dif = f.distancia - distMin;
+            const gap = dif >= 1 ? `<small>+${formatearDistancia(dif)}</small>` : '';
+            distHtml = `<div class="lb-dist">${formatearDistancia(f.distancia)}${gap}</div>`;
+        }
+
+        const fila = document.createElement('div');
+        fila.className = 'lb-row' + (i === 0 && f.conSenal ? ' lb-leader' : '') + (!f.conSenal ? ' lb-offline' : '') + (sospechoso ? ' lb-suspicious' : '');
+        fila.title = f.conSenal ? 'Clic para ver en el mapa' : 'Aún no transmite posición';
+        fila.innerHTML = `
+            <div class="lb-pos">${f.conSenal && pos <= 3 ? MEDALLAS[pos - 1] : pos}</div>
+            <div class="lb-runner">${icono}<span class="lb-name">${sospechoso ? '🚨 ' : ''}${escaparHtml(f.id)}</span>${tendencia}</div>
+            ${distHtml}`;
+        if (f.conSenal) {
+            fila.addEventListener('click', () => {
+                autoEncuadre = false;
+                actualizarBotonEncuadre();
+                map.flyTo(f.c.marker.getLatLng(), Math.max(map.getZoom(), 17), { duration: 0.8 });
+                f.c.marker.openPopup();
+            });
+        }
+        lbBody.appendChild(fila);
+    });
+    rankAnterior = nuevoRank;
+
+    lbFooter.textContent = estadoCarrera === 'FINISHED'
+        ? 'Carrera finalizada · clasificación final'
+        : `Ordenado por distancia a la meta · radio ${Math.round(metaRadioM)} m`;
+
+    // Quita las flechas ▲▼ cuando vence su tiempo, aunque no lleguen más posiciones
+    if (proximaLimpieza > 0) setTimeout(programarLeaderboard, proximaLimpieza + 50);
+}
+
+// Agrupa varias actualizaciones seguidas (llegan decenas de paquetes por segundo) en un solo repintado
+function programarLeaderboard() {
+    if (lbPendiente) return;
+    lbPendiente = true;
+    requestAnimationFrame(renderizarLeaderboard);
+}
 
 conectarWebSocket();
 refrescarRosterDeSala();
