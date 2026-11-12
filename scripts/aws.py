@@ -92,6 +92,21 @@ def stack(cfg):
     return stacks['Stacks'][0] if stacks else None
 
 
+def stack_ok(cfg):
+    s = stack(cfg)
+    return bool(s) and s['StackStatus'] in ('CREATE_COMPLETE', 'UPDATE_COMPLETE')
+
+
+def print_failures(cfg):
+    """Muestra los recursos que fallaron y el motivo que da CloudFormation."""
+    events = aws(cfg, 'cloudformation', 'describe-stack-events', '--stack-name', cfg['stack'],
+                 check=False, quiet=True) or {'StackEvents': []}
+    failed = [e for e in events['StackEvents'] if e['ResourceStatus'].endswith('FAILED')]
+    print('\nRecursos que fallaron (del mas reciente al mas antiguo):')
+    for e in failed[:10]:
+        print(f'  - {e["LogicalResourceId"]}: {e.get("ResourceStatusReason", "sin detalle")}')
+
+
 def outputs(cfg):
     s = stack(cfg)
     if not s or 'Outputs' not in s:
@@ -195,9 +210,12 @@ def cmd_deploy(a, cfg):
               f'BootstrapScript={packed("bootstrap.sh")}', f'SshCidr={a.ssh_cidr or ""}',
               f'KeyName={a.key_name or ""}', f'InstanceProfileName={a.instance_profile}']
     print('Desplegando deploy/aws/cloudformation.yaml (3-5 min la primera vez)...')
-    aws(cfg, 'cloudformation', 'deploy', '--stack-name', cfg['stack'],
-        '--template-file', str(DEPLOY / 'cloudformation.yaml'), '--no-fail-on-empty-changeset',
-        '--parameter-overrides', *params, '--tags', *TAGS)
+    ok = aws(cfg, 'cloudformation', 'deploy', '--stack-name', cfg['stack'],
+             '--template-file', str(DEPLOY / 'cloudformation.yaml'), '--no-fail-on-empty-changeset',
+             '--parameter-overrides', *params, '--tags', *TAGS, check=False)
+    if ok is None and not stack_ok(cfg):
+        print_failures(cfg)
+        raise SystemExit('El despliegue fallo. Corrija la causa de arriba y vuelva a ejecutar deploy.')
     out = outputs(cfg)
     cfg.update(url=out['Url'], instance=out['InstanceId'])
     save_cfg(cfg)
