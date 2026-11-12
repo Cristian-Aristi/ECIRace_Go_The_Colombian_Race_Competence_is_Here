@@ -10,7 +10,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.util.Comparator;
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Service
 public class AuthServiceImpl implements AuthService {
@@ -125,6 +128,17 @@ public class AuthServiceImpl implements AuthService {
             profile.setRating(Math.round(rate * 10.0) / 10.0);
             return userProfileRepository.save(profile);
         }).orElse(null);
+    }
+
+    @Override
+    public List<UserProfile> getLeaderboard(int limit) {
+        int max = Math.max(1, Math.min(limit, 50));
+        return userProfileRepository.findAll().stream()
+                .sorted(Comparator.comparingInt(UserProfile::getWinsCount).reversed()
+                        .thenComparing(Comparator.comparingInt(UserProfile::getRacesCount).reversed())
+                        .thenComparing(UserProfile::getUsername, String.CASE_INSENSITIVE_ORDER))
+                .limit(max)
+                .collect(Collectors.toList());
     }
 
     private String resolveUsername(String providedUsername, String fullName, String email) {

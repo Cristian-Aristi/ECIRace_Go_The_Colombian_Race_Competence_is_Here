@@ -1,5 +1,11 @@
 // src/main/resources/static/js/index.js
 
+// Capa visual de juego (game-ui.js), con respaldo si no cargara
+const UI = window.GameUI || {
+    toast: (m) => alert(m),
+    setLabel: (b, t) => { if (b) b.textContent = t; }
+};
+
 const inviteUrlParams = new URLSearchParams(window.location.search);
 const roomFromInviteLink = inviteUrlParams.get('room');
 
@@ -29,11 +35,15 @@ window.switchRole = function(role) {
     if (role === 'DESKTOP') {
         tabDesktop.classList.add('active');
         tabMobile.classList.remove('active');
+        tabDesktop.setAttribute('aria-selected', 'true');
+        tabMobile.setAttribute('aria-selected', 'false');
         desktopView.style.display = 'block';
         mobileView.style.display = 'none';
     } else {
         tabMobile.classList.add('active');
         tabDesktop.classList.remove('active');
+        tabMobile.setAttribute('aria-selected', 'true');
+        tabDesktop.setAttribute('aria-selected', 'false');
         desktopView.style.display = 'none';
         mobileView.style.display = 'block';
     }
@@ -59,7 +69,7 @@ const btnCreateRoomAndGo = document.getElementById('btnCreateRoomAndGo');
 btnCreateRoomAndGo.addEventListener('click', async () => {
     const preferred = hostRoomCodeInput.value.trim();
     btnCreateRoomAndGo.disabled = true;
-    btnCreateRoomAndGo.textContent = "⏳ Creando Sala...";
+    UI.setLabel(btnCreateRoomAndGo, "CREANDO...");
 
     try {
         const res = await fetch('/api/rooms/create', {
@@ -77,9 +87,9 @@ btnCreateRoomAndGo.addEventListener('click', async () => {
             return;
         } else {
             const err = await res.json().catch(() => ({ error: 'Ese código ya está en uso.' }));
-            alert(err.error || 'No se pudo crear la sala.');
+            UI.toast(err.error || 'No se pudo crear la sala.', 'error');
             btnCreateRoomAndGo.disabled = false;
-            btnCreateRoomAndGo.textContent = "🚀 CREAR SALA Y ABRIR DASHBOARD ▶";
+            UI.setLabel(btnCreateRoomAndGo, "CREAR SALA ▷");
             return;
         }
     } catch (err) {
@@ -229,3 +239,6 @@ btnLogoutCurrent.addEventListener('click', () => {
     localStorage.removeItem('ecirace_username');
     activeSessionBanner.style.display = "none";
 });
+// Enter en el campo de tag o de sala dispara el botón correspondiente
+guestInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') btnEnterGuest.click(); });
+hostRoomCodeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') btnCreateRoomAndGo.click(); });

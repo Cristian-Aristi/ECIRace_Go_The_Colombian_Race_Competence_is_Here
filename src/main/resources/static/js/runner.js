@@ -1,3 +1,15 @@
+// Capa visual de juego (game-ui.js), con respaldo si no cargara
+const UI = window.GameUI || {
+    toast: (m) => alert(m),
+    setLabel: (b, t) => { if (b) b.textContent = t; },
+    countdown: () => Promise.resolve(),
+    confetti: () => {},
+    setSceneSpeed: () => {},
+    sfx: { win() {}, lose() {}, coin() {}, error() {} },
+    settings: { highAccuracy: true },
+    icon: () => ''
+};
+
 const urlParams = new URLSearchParams(window.location.search);
 let runnerId = urlParams.get('player');
 let selectedCar = urlParams.get('car');
@@ -30,6 +42,63 @@ try {
 } catch (e) {}
 
 const roomCode = (urlParams.get('room') || 'CAMPUS-ECI').toUpperCase();
+
+// ---- Carro elegido en el HUD ----
+const IMAGEN_CARRO = { RENAULT_4: 'img/renault.png?v=2', CHEVROLET_SPARK: 'img/spark.png?v=2', MAZDA_323: 'img/mazda.png?v=2' };
+['driverCarImg', 'trackCarImg'].forEach(id => {
+    const img = document.getElementById(id);
+    if (img) img.src = IMAGEN_CARRO[selectedCar] || IMAGEN_CARRO.RENAULT_4;
+});
+
+// ---- Velocímetro arcade (0-40 km/h; desde 30 km/h el anti-trampas sospecha) ----
+const VEL_MAX = 40;
+let agujaVelocimetro = null;
+(function construirVelocimetro() {
+    const svg = document.getElementById('speedoSvg');
+    if (!svg) return;
+    const cx = 150, cy = 150, r = 118, segmentos = 24;
+    let html = `<path d="M ${cx - 132} ${cy} A 132 132 0 0 1 ${cx + 132} ${cy}" fill="none" stroke="#050b22" stroke-width="30" stroke-linecap="butt"/>`;
+    for (let i = 0; i < segmentos; i++) {
+        const a0 = Math.PI + (i / segmentos) * Math.PI + 0.02;
+        const a1 = Math.PI + ((i + 1) / segmentos) * Math.PI - 0.02;
+        const v = (i + 0.5) / segmentos * VEL_MAX;
+        const color = v >= 30 ? '#ff4b55' : (v >= 20 ? '#ffc928' : '#3fcf6a');
+        const p = (a, rr) => `${(cx + rr * Math.cos(a)).toFixed(1)} ${(cy + rr * Math.sin(a)).toFixed(1)}`;
+        html += `<path d="M ${p(a0, r + 10)} A ${r + 10} ${r + 10} 0 0 1 ${p(a1, r + 10)} L ${p(a1, r - 10)} A ${r - 10} ${r - 10} 0 0 0 ${p(a0, r - 10)} Z" fill="${color}" stroke="#050b22" stroke-width="2" shape-rendering="crispEdges"/>`;
+    }
+    for (let k = 0; k <= VEL_MAX; k += 10) {
+        const a = Math.PI + (k / VEL_MAX) * Math.PI;
+        const tx = cx + (r - 32) * Math.cos(a), ty = cy + (r - 32) * Math.sin(a);
+        html += `<text x="${tx.toFixed(1)}" y="${(ty + 6).toFixed(1)}" text-anchor="middle" font-family="VT323, monospace" font-size="22" fill="#c6d6ff">${k}</text>`;
+    }
+    html += `<g id="g-needle"><rect x="${cx - 3}" y="${cy - r + 6}" width="6" height="${r - 6}" fill="#ffffff" stroke="#050b22" stroke-width="2"/>`
+        + `<rect x="${cx - 3}" y="${cy - r + 6}" width="6" height="14" fill="#ff4b55"/></g>`
+        + `<rect x="${cx - 12}" y="${cy - 12}" width="24" height="24" fill="#ffc928" stroke="#050b22" stroke-width="3"/>`;
+    svg.innerHTML = html;
+    agujaVelocimetro = document.getElementById('g-needle');
+    moverAguja(0);
+})();
+
+function moverAguja(kmh) {
+    if (!agujaVelocimetro) return;
+    const v = Math.max(0, Math.min(VEL_MAX, kmh || 0));
+    agujaVelocimetro.style.transform = `rotate(${-90 + (v / VEL_MAX) * 180}deg)`;
+}
+
+// ---- Barra de pista: el carro avanza según la distancia real a la meta ----
+let distanciaInicialMeta = null;
+let ultimoFixGps = null;
+function actualizarPistaMeta(lat, lng) {
+    const etiqueta = document.getElementById('distMetaDisplay');
+    const carro = document.getElementById('trackCarImg');
+    if (!metaLatGlobal || !metaLonGlobal || !etiqueta || !carro) return;
+    const d = calcularDistanciaMetros(lat, lng, metaLatGlobal, metaLonGlobal);
+    if (!isFinite(d)) return;
+    if (distanciaInicialMeta === null || d > distanciaInicialMeta) distanciaInicialMeta = Math.max(d, 1);
+    const avance = Math.max(0, Math.min(1, 1 - d / distanciaInicialMeta));
+    carro.style.left = `${4 + avance * 88}%`;
+    etiqueta.textContent = d >= 1000 ? `${(d / 1000).toFixed(2)} km` : `${Math.round(d)} m`;
+}
 document.getElementById('runnerIdDisplay').innerText = runnerId;
 document.getElementById('roomDisplay').innerText = roomCode;
 document.getElementById('gateRoomCode').innerText = roomCode;
@@ -180,22 +249,26 @@ document.addEventListener('visibilitychange', () => {
 function mostrarNotificacionVictoria(winnerId, soyElGanador) {
     const viejo = document.getElementById('victoryBanner');
     if (viejo) viejo.remove();
-    const banner = document.createElement('div');
-    banner.id = 'victoryBanner';
-    banner.style.cssText = `
-        position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
-        width: min(92vw, 420px); box-sizing: border-box; text-align: center;
-        padding: 1rem 1.25rem; border-radius: 12px; z-index: 9999; font-family: monospace;
-        font-weight: bold; border: 3px solid #fff; box-shadow: 0 10px 30px rgba(0,0,0,0.7);
-        ${soyElGanador
-        ? 'background: linear-gradient(135deg, #FFD700, #FFA500); color: #000;'
-        : 'background: #1c2024; color: #e8a33d;'}
-    `;
     const nombre = String(winnerId || 'Nadie').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    banner.innerHTML = soyElGanador
-        ? '🏆 ¡GANASTE LA CARRERA! 🏆'
-        : `🏁 Carrera finalizada<br><span style="font-size:0.9rem;">Ganador: ${nombre}</span>`;
-    document.body.appendChild(banner);
+    const overlay = document.createElement('div');
+    overlay.id = 'victoryBanner';
+    overlay.className = 'g-result' + (soyElGanador ? '' : ' g-result--lose');
+    overlay.setAttribute('role', 'alertdialog');
+    overlay.setAttribute('aria-modal', 'true');
+    const volver = `lobby.html?player=${encodeURIComponent(runnerId)}`;
+    const tablero = `dashboard.html?room=${encodeURIComponent(roomCode)}`;
+    overlay.innerHTML = `
+        <div class="g-result__card g-panel">
+            <div class="g-result__trophy">${UI.icon(soyElGanador ? 'trophy' : 'flag')}</div>
+            <h2 class="g-result__title">${soyElGanador ? '🏆 ¡GANASTE LA CARRERA! 🏆' : 'Carrera finalizada'}</h2>
+            <div class="g-result__sub">${soyElGanador
+        ? 'Llegaste primero a la meta. ¡Victoria sumada a tu perfil!'
+        : `Ganador: <b>${nombre}</b>`}</div>
+            <a class="g-btn g-btn--gold" href="${volver}">Volver al garaje</a>
+            <a class="g-btn" href="${tablero}">Ver el tablero de la sala</a>
+        </div>`;
+    document.body.appendChild(overlay);
+    if (soyElGanador) { UI.sfx.win(); UI.confetti(4000); } else { UI.sfx.lose(); }
 }
 
 function detenerTodo() {
@@ -219,7 +292,10 @@ function procesarEstadoSala(room) {
 
     if (room.status !== anterior) {
         log(`👥 Estado de la sala: ${room.status}`, 'info');
-        if (room.status === 'IN_PROGRESS') log('🏁 ¡El host inició la carrera! GPS habilitado.', 'info');
+        if (room.status === 'IN_PROGRESS') {
+            log('🏁 ¡El host inició la carrera! GPS habilitado.', 'info');
+            mostrarCuentaRegresiva();
+        }
     }
 
     if (room.status === 'WAITING' || room.status === 'IN_PROGRESS') {
@@ -238,6 +314,12 @@ function procesarEstadoSala(room) {
         mostrarNotificacionVictoria(room.winnerId, soyElGanador);
         try { localStorage.removeItem('ecirace_username'); } catch (e) {}
     }
+}
+
+function mostrarCuentaRegresiva() {
+    const clave = 'ecirace_countdown_' + roomCode;
+    try { if (sessionStorage.getItem(clave)) return; sessionStorage.setItem(clave, '1'); } catch (e) {}
+    UI.countdown().then(() => UI.toast('¡Arranca! Pulsa "Iniciar GPS real" y corre a la meta.', 'ok'));
 }
 
 function applyGateState(status) {
@@ -296,7 +378,8 @@ function conectarWebSocket() {
         isWsConnected = true;
         if (wsStatusDisplay) {
             wsStatusDisplay.innerText = "CONECTADO (En Vivo)";
-            wsStatusDisplay.style.color = "var(--color-teal)";
+            wsStatusDisplay.className = 'g-pill g-pill--teal';
+            wsStatusDisplay.style.color = "";
         }
         log(`Conexión WebSocket establecida para sala ${roomCode}.`, "info");
 
@@ -311,7 +394,8 @@ function conectarWebSocket() {
         // stomp.js llama a este callback tanto si falla la conexión inicial como si se cae el socket después
         if (wsStatusDisplay) {
             wsStatusDisplay.innerText = "RECONECTANDO...";
-            wsStatusDisplay.style.color = "var(--color-alert)";
+            wsStatusDisplay.className = 'g-pill g-pill--red';
+            wsStatusDisplay.style.color = "";
         }
         programarReconexion();
     });
@@ -348,6 +432,9 @@ function updateUI(lat, lng, acc, speed, source, fixTs) {
     accDisplay.textContent = acc ? `± ${acc} m` : 'N/A';
     speedDisplay.textContent = speed.toFixed(1);
     timeDisplay.textContent = new Date().toLocaleTimeString();
+    moverAguja(speed);
+    UI.setSceneSpeed(speed);
+    actualizarPistaMeta(lat, lng);
 
     // La meta la valida el SERVIDOR (el primero que llegue gana, sin importar el reloj de cada teléfono).
     // Aquí solo avisamos y seguimos enviando la posición hasta que llegue el estado FINISHED.
@@ -357,17 +444,18 @@ function updateUI(lat, lng, acc, speed, source, fixTs) {
             metaReachedNotified = true;
             log(`🏁 Estás a ${distancia.toFixed(1)} m de la meta. Esperando confirmación del servidor...`, 'info');
             hudStatus.textContent = "EN LA META";
+            UI.toast('🏁 ¡Estás en la meta! Esperando la confirmación del servidor...', 'ok');
         }
     }
 }
 
 btnStartGps.addEventListener('click', () => {
     if (!raceInProgress) {
-        alert('El host todavía no ha iniciado la carrera.');
+        UI.toast('El host todavía no ha iniciado la carrera.', 'warn');
         return;
     }
     if (!("geolocation" in navigator)) {
-        alert("Geolocalización no soportada en este navegador.");
+        UI.toast("Este navegador no tiene GPS. Usa el simulador de ruta.", 'error');
         return;
     }
     btnStartGps.disabled = true;
@@ -386,12 +474,22 @@ btnStartGps.addEventListener('click', () => {
             log(`GPS poco preciso (± ${Math.round(pos.coords.accuracy)} m), esperando una señal mejor...`, 'warn');
             return;
         }
-        const speedKmh = pos.coords.speed !== null && !isNaN(pos.coords.speed) ? pos.coords.speed * 3.6 : 0.0;
+        let speedKmh = pos.coords.speed !== null && !isNaN(pos.coords.speed) ? pos.coords.speed * 3.6 : null;
+        // Algunos teléfonos no reportan velocidad: se estima con la lectura anterior del GPS
+        if (speedKmh === null) {
+            speedKmh = 0;
+            if (ultimoFixGps && pos.timestamp > ultimoFixGps.ts) {
+                const seg = (pos.timestamp - ultimoFixGps.ts) / 1000;
+                const metros = calcularDistanciaMetros(ultimoFixGps.lat, ultimoFixGps.lng, pos.coords.latitude, pos.coords.longitude);
+                if (seg >= 0.5 && isFinite(metros)) speedKmh = Math.min(99, (metros / seg) * 3.6);
+            }
+        }
+        ultimoFixGps = { lat: pos.coords.latitude, lng: pos.coords.longitude, ts: pos.timestamp };
         updateUI(pos.coords.latitude, pos.coords.longitude, Math.round(pos.coords.accuracy), speedKmh, 'GPS_HARDWARE', pos.timestamp);
     }, (err) => {
         log("Error en GPS: " + err.message + (err.code === 1 ? " (permiso denegado: actívalo en los ajustes del navegador)" : ""), "error");
     }, {
-        enableHighAccuracy: true,
+        enableHighAccuracy: UI.settings.highAccuracy !== false,
         maximumAge: 0,
         timeout: 10000
     });
@@ -415,13 +513,15 @@ btnStopGps.addEventListener('click', () => {
     btnStopGps.disabled = true;
     hudStatus.textContent = "STANDBY";
     hudStatus.style.color = "var(--color-alert)";
-    btnToggleSim.textContent = "🎮 Activar Simulador de Ruta";
+    UI.setLabel(btnToggleSim, "Activar simulador de ruta");
+    UI.setSceneSpeed(0);
+    moverAguja(0);
     log("Rastreo detenido.", "warn");
 });
 
 btnToggleSim.addEventListener('click', () => {
     if (!raceInProgress) {
-        alert('El host todavía no ha iniciado la carrera.');
+        UI.toast('El host todavía no ha iniciado la carrera.', 'warn');
         return;
     }
     if (simInterval !== null) {
@@ -430,14 +530,14 @@ btnToggleSim.addEventListener('click', () => {
         detenerTransmisionContinua();
         btnStartGps.disabled = !raceInProgress;
         btnStopGps.disabled = true;
-        btnToggleSim.textContent = "🎮 Activar Simulador de Ruta";
+        UI.setLabel(btnToggleSim, "Activar simulador de ruta");
         hudStatus.textContent = "STANDBY";
         log("Simulador detenido.", "warn");
     } else {
         if (watchId !== null) navigator.geolocation.clearWatch(watchId);
         btnStartGps.disabled = true;
         btnStopGps.disabled = false;
-        btnToggleSim.textContent = "⏹️ Detener Simulador";
+        UI.setLabel(btnToggleSim, "Detener simulador");
         log("Simulador de ruta iniciado.", "info");
         solicitarWakeLock();
 
@@ -455,7 +555,7 @@ const btnSimulateWin = document.getElementById('btnSimulateWin');
 if (btnSimulateWin) {
     btnSimulateWin.addEventListener('click', async () => {
         if (!raceInProgress) {
-            alert("⚠️ ERROR: El host debe Iniciar la Carrera primero desde el Dashboard.");
+            UI.toast("El host debe iniciar la carrera primero.", 'warn');
             return;
         }
 
@@ -480,7 +580,7 @@ if (btnSimulateWin) {
             } catch (err) {}
 
             btnSimulateWin.disabled = true;
-            btnSimulateWin.textContent = "⏳ Posicionando...";
+            UI.setLabel(btnSimulateWin, "Posicionando...");
             if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
             if (simInterval !== null) { clearInterval(simInterval); simInterval = null; }
             detenerTransmisionContinua();
@@ -494,7 +594,7 @@ if (btnSimulateWin) {
             solicitarWakeLock();
 
             setTimeout(() => {
-                btnSimulateWin.textContent = "🏁 Trotando a la meta (11 km/h)...";
+                UI.setLabel(btnSimulateWin, "Trotando a la meta (11 km/h)...");
 
                 let steps = 20;
                 let currentStep = 0;
@@ -518,7 +618,7 @@ if (btnSimulateWin) {
                         clearInterval(window.simPathInterval);
                         window.simPathInterval = null;
                         // La victoria NO se declara aquí: la confirma el servidor para todos los dispositivos a la vez
-                        btnSimulateWin.textContent = "🏁 En la meta, esperando confirmación...";
+                        UI.setLabel(btnSimulateWin, "En la meta, esperando confirmación...");
                     }
                 }, 250);
             }, 2000);
@@ -526,7 +626,7 @@ if (btnSimulateWin) {
         } catch (e) {
             console.error(e);
             btnSimulateWin.disabled = false;
-            btnSimulateWin.textContent = "🏁 Simular Victoria";
+            UI.setLabel(btnSimulateWin, "Simular victoria (ir a la meta)");
         }
     });
 }

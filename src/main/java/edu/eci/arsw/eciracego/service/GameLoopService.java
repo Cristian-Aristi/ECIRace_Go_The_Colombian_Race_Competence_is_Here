@@ -80,7 +80,13 @@ public class GameLoopService {
                         // Notificar a los clientes que la carrera terminó
                         messagingTemplate.convertAndSend("/topic/rooms/" + roomCode + "/status", room);
 
-                        // TODO: Aquí llamarás a raceManager.guardarResultados(room) para usar JPA
+                        // Suma la carrera a todos los pilotos de la sala y la victoria al ganador.
+                        // declareWinner() es atómico, así que esto se ejecuta una sola vez por carrera.
+                        try {
+                            raceManager.saveResults(room);
+                        } catch (RuntimeException e) {
+                            log.warn("No se pudieron guardar los resultados de la sala {}: {}", roomCode, e.getMessage());
+                        }
                     }
                 }
             }

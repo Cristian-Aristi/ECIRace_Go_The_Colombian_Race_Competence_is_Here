@@ -71,6 +71,14 @@ public class AuthController {
     }
 
     /**
+     * Tabla de clasificación: pilotos con más victorias (por defecto los 10 primeros).
+     */
+    @GetMapping("/leaderboard")
+    public ResponseEntity<java.util.List<UserProfile>> leaderboard(@RequestParam(defaultValue = "10") int limit) {
+        return ResponseEntity.ok(authService.getLeaderboard(limit));
+    }
+
+    /**
      * Registra una carrera finalizada para actualizar estadísticas en vivo.
      */
     @PostMapping("/race-result")

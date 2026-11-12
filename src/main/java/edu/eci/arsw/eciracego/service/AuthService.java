@@ -48,4 +48,9 @@ public interface AuthService {
      * Registra el resultado de una carrera disputada por el piloto.
      */
     UserProfile recordRace(String username, boolean won);
+
+    /**
+     * Pilotos con más victorias (desempata por carreras disputadas y luego por nombre).
+     */
+    java.util.List<UserProfile> getLeaderboard(int limit);
 }

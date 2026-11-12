@@ -1,5 +1,15 @@
 // src/main/resources/static/js/lobby.js
 
+// Capa visual de juego (game-ui.js). Si no cargara, se usan los diálogos del navegador.
+const UI = window.GameUI || {
+    toast: (m) => alert(m),
+    setLabel: (b, t) => { if (b) b.textContent = t; },
+    confirm: (m) => Promise.resolve(confirm(m)),
+    sfx: { join() {}, error() {}, coin() {}, select() {} },
+    settings: { audio: true, highAccuracy: true },
+    icon: () => ''
+};
+
 const urlParams = new URLSearchParams(window.location.search);
 const preselectedRoom = urlParams.get('room');
 
@@ -81,10 +91,14 @@ window.selectVehicle = function(vehicleType) {
     safeSetStorage('ecirace_vehicle', selectedVehicleMemory);
     safeSetStorage('ecirace_car', selectedVehicleMemory);
 
-    document.querySelectorAll('.vehicle-btn').forEach(btn => btn.classList.remove('active'));
+    document.querySelectorAll('.vehicle-btn').forEach(btn => {
+        btn.classList.remove('active');
+        btn.setAttribute('aria-pressed', 'false');
+    });
     const activeBtn = document.getElementById('btn-' + selectedVehicleMemory);
     if (activeBtn) {
         activeBtn.classList.add('active');
+        activeBtn.setAttribute('aria-pressed', 'true');
     }
 };
 
@@ -106,18 +120,41 @@ async function cargarSalasActivas() {
                     const pill = document.createElement('span');
                     pill.className = `room-pill ${r.roomCode === roomInput.value.trim().toUpperCase() ? 'active' : ''} ${isFull ? 'full' : ''} ${isStarted ? 'started' : ''}`;
                     pill.dataset.code = r.roomCode;
-                    const statusIcon = isStarted ? '🔒' : (isFull ? '⛔' : '🏁');
-                    pill.innerHTML = `${statusIcon} <strong>${r.roomCode}</strong> (${r.runnersCount || 0}/${MAX_PLAYERS} 🏎️)`;
+                    const ocupados = r.runnersCount || 0;
+                    const barras = Math.max(1, Math.ceil((ocupados / MAX_PLAYERS) * 4));
+                    const estado = isStarted ? ' · EN CARRERA' : (isFull ? ' · LLENA' : '');
+                    pill.innerHTML = `<span class="g-ico" style="width:20px;height:18px;">${UI.icon('wifi')}</span>`
+                        + `<strong>${escaparHtml(r.roomCode)}</strong> (${ocupados}/${MAX_PLAYERS})${estado}`
+                        + `<span class="g-bars is-on">${[1, 2, 3, 4].map(n => `<i style="${n > barras ? 'background:rgba(0,0,0,.3)' : ''}"></i>`).join('')}</span>`;
+                    pill.title = isStarted ? 'La carrera ya empezó' : (isFull ? 'Sala llena' : 'Toca para elegir esta sala');
                     if (!isFull && !isStarted) {
                         pill.onclick = () => window.selectRoom(r.roomCode);
                     }
                     activeRoomsContainer.appendChild(pill);
                 });
             }
+            marcarConexion(true);
+        } else {
+            marcarConexion(false);
         }
     } catch (e) {
+        marcarConexion(false);
         console.warn("No se pudieron cargar salas activas del backend:", e);
     }
+}
+
+function escaparHtml(txt) {
+    return String(txt).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+
+// Barras del chip "PILOT HUD": verdes si el servidor responde, rojas si no
+function marcarConexion(ok) {
+    const bars = document.getElementById('hudBars');
+    if (!bars) return;
+    bars.classList.remove('is-weak', 'is-on', 'is-off');
+    bars.classList.add(ok ? 'is-on' : 'is-off');
+    const chip = document.getElementById('hudStatus');
+    if (chip) chip.title = ok ? 'Conectado al servidor' : 'Sin conexión con el servidor';
 }
 
 async function cargarPerfil(username) {
@@ -170,15 +207,15 @@ function renderizarPerfil(profile) {
     winRateDisplay.textContent = `${rate}%`;
 
     if (races >= 100) {
-        rankBadge.textContent = "★★★★★ (PRO RACER)";
+        rankBadge.textContent = "★★★ (PRO RACER)";
     } else if (races >= 20) {
-        rankBadge.textContent = "★★★☆☆ (EXPERIENCED)";
+        rankBadge.textContent = "★★☆ (EXPERIENCED)";
     } else {
-        rankBadge.textContent = "★☆☆☆☆ (ROOKIE)";
+        rankBadge.textContent = "★☆☆ (ROOKIE)";
     }
 
-    document.getElementById('myRankName').textContent = `📍 ${profile.username} (Tú)`;
-    document.getElementById('myRankStats').textContent = `${wins} / ${races} (${rate}%)`;
+    document.getElementById('myRankName').textContent = profile.username;
+    document.getElementById('myRankStats').textContent = `${wins} V / ${races} C · ${rate}%`;
 }
 
 btnCreateRoom.addEventListener('click', async () => {
@@ -186,7 +223,7 @@ btnCreateRoom.addEventListener('click', async () => {
     const pilot = pilotNameDisplay.textContent.trim();
     createRoomError.style.display = 'none';
     btnCreateRoom.disabled = true;
-    btnCreateRoom.textContent = "⏳ Creando...";
+    UI.setLabel(btnCreateRoom, "Creando...");
 
     try {
         const res = await fetch('/api/rooms/create', {
@@ -223,13 +260,15 @@ btnCreateRoom.addEventListener('click', async () => {
             const err = await res.json().catch(() => ({ error: 'No se pudo crear la sala.' }));
             createRoomError.textContent = err.error || 'Ese código ya está en uso, elige otro.';
             createRoomError.style.display = 'block';
+            UI.sfx.error();
         }
     } catch (e) {
-        createRoomError.textContent = 'Error de red al crear la sala.';
+        createRoomError.textContent = 'Sin conexión con el servidor. Revisa tu red e inténtalo de nuevo.';
         createRoomError.style.display = 'block';
+        UI.sfx.error();
     } finally {
         btnCreateRoom.disabled = false;
-        btnCreateRoom.textContent = "🆕 Crear";
+        UI.setLabel(btnCreateRoom, "Crear");
     }
 });
 
@@ -258,10 +297,12 @@ btnJoinRace.addEventListener('click', async () => {
             const err = await res.json().catch(() => ({ error: 'No se pudo unir a la sala.' }));
             joinRoomError.textContent = err.error || `No fue posible unirse a ${room}.`;
             joinRoomError.style.display = 'block';
+            UI.sfx.error();
         }
     } catch (e) {
-        joinRoomError.textContent = 'Error de red al unirse a la sala.';
+        joinRoomError.textContent = 'Sin conexión con el servidor. Revisa tu red e inténtalo de nuevo.';
         joinRoomError.style.display = 'block';
+        UI.sfx.error();
     } finally {
         btnJoinRace.disabled = false;
     }
@@ -273,6 +314,8 @@ function enterWaitingRoom(roomCode) {
     currentRoomCodeLabel.textContent = roomCode;
     createRoomSection.style.display = 'none';
     waitingRoomSection.style.display = 'block';
+    UI.sfx.join();
+    try { waitingRoomSection.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {}
 
     refreshRoomState();
     if (roomPollInterval) clearInterval(roomPollInterval);
@@ -315,7 +358,7 @@ function renderWaitingRoom(room) {
     const count = room.runnersCount || 0;
 
     raceStatusBadge.textContent = room.status;
-    raceStatusBadge.style.color = room.status === 'IN_PROGRESS' ? 'var(--color-teal)' : 'var(--color-amber)';
+    raceStatusBadge.className = 'g-pill ' + (room.status === 'IN_PROGRESS' ? 'g-pill--teal' : (room.status === 'FINISHED' ? 'g-pill--red' : 'g-pill--gold'));
     rosterCountLabel.textContent = `${count} / ${MAX_PLAYERS}`;
 
     const pct = Math.min(100, (count / MAX_PLAYERS) * 100);
@@ -323,13 +366,23 @@ function renderWaitingRoom(room) {
     capacityBarFill.classList.toggle('full', count >= MAX_PLAYERS);
 
     rosterGrid.innerHTML = '';
-    (room.activeRunners || []).forEach(name => {
-        const isHostRunner = room.hostName && name.trim().toLowerCase() === room.hostName.trim().toLowerCase();
+    const pilotos = room.activeRunners || [];
+    for (let i = 0; i < MAX_PLAYERS; i++) {
+        const name = pilotos[i];
         const item = document.createElement('div');
-        item.className = `roster-item ${isHostRunner ? 'is-host' : ''}`;
-        item.innerHTML = `${isHostRunner ? '👑' : '🏎️'} ${name}`;
+        item.dataset.slot = String(i + 1);
+        if (!name) {
+            item.className = 'roster-item is-empty';
+            item.textContent = 'Libre';
+        } else {
+            const isHostRunner = room.hostName && name.trim().toLowerCase() === room.hostName.trim().toLowerCase();
+            const soyYo = name.trim().toLowerCase() === pilot.toLowerCase();
+            item.className = 'roster-item' + (isHostRunner ? ' is-host' : '') + (soyYo ? ' is-me' : '');
+            item.textContent = (isHostRunner ? '👑 ' : '') + name + (soyYo ? ' (tú)' : '');
+            item.title = isHostRunner ? 'Host de la sala' : 'Piloto';
+        }
         rosterGrid.appendChild(item);
-    });
+    }
 
     hostControls.style.display = soyHost ? 'block' : 'none';
     guestWaitingMsg.style.display = (!soyHost && room.status === 'WAITING') ? 'block' : 'none';
@@ -347,7 +400,7 @@ function renderWaitingRoom(room) {
 btnStartRace.addEventListener('click', async () => {
     const pilot = pilotNameDisplay.textContent.trim();
     btnStartRace.disabled = true;
-    btnStartRace.textContent = "⏳ Iniciando...";
+    UI.setLabel(btnStartRace, "INICIANDO...");
 
     try {
         const res = await fetch(`/api/rooms/${encodeURIComponent(activeRoomCode)}/start`, {
@@ -360,14 +413,14 @@ btnStartRace.addEventListener('click', async () => {
         });
         if (!res.ok) {
             const err = await res.json().catch(() => ({ error: 'No se pudo iniciar la carrera.' }));
-            alert(err.error || 'No se pudo iniciar la carrera.');
+            UI.toast(err.error || 'No se pudo iniciar la carrera.', 'error');
             btnStartRace.disabled = false;
-            btnStartRace.textContent = "🚀 INICIAR CARRERA";
+            UI.setLabel(btnStartRace, "INICIAR CARRERA");
         }
     } catch (e) {
-        alert('Error de red al iniciar la carrera.');
+        UI.toast('Sin conexión con el servidor: la carrera no se inició.', 'error');
         btnStartRace.disabled = false;
-        btnStartRace.textContent = "🚀 INICIAR CARRERA";
+        UI.setLabel(btnStartRace, "INICIAR CARRERA");
     }
 });
 
@@ -401,8 +454,8 @@ btnGoDashboard.addEventListener('click', () => {
     window.location.href = `dashboard.html?room=${encodeURIComponent(room)}`;
 });
 
-btnLogout.addEventListener('click', () => {
-    if (confirm("¿Deseas cerrar la sesión de piloto?")) {
+btnLogout.addEventListener('click', async () => {
+    if (await UI.confirm("¿Cerrar la sesión de este piloto?", "Cerrar sesión", "Seguir aquí")) {
         safeRemoveStorage('ecirace_username');
         window.location.href = "index.html";
     }
@@ -448,6 +501,7 @@ btnSaveTag.addEventListener('click', async () => {
     }
 
     changeTagModal.style.display = "none";
+    UI.toast(`Tag actualizado: ${pilotNameDisplay.textContent.trim()}`, 'ok');
 });
 
 btnCancelTag.addEventListener('click', () => { changeTagModal.style.display = "none"; });
@@ -457,7 +511,42 @@ const btnLeaderboard = document.getElementById('btnLeaderboard');
 const leaderboardModal = document.getElementById('leaderboardModal');
 const btnCloseLeaderboard = document.getElementById('btnCloseLeaderboard');
 const btnDoneLeaderboard = document.getElementById('btnDoneLeaderboard');
-btnLeaderboard.addEventListener('click', () => { leaderboardModal.style.display = "flex"; });
+btnLeaderboard.addEventListener('click', () => {
+    leaderboardModal.style.display = "flex";
+    cargarClasificacion();
+});
+
+// Top de pilotos por victorias (GET /api/auth/leaderboard)
+async function cargarClasificacion() {
+    const lista = document.getElementById('leaderboardList');
+    lista.innerHTML = '<div class="g-board__empty">Cargando pilotos...</div>';
+    try {
+        const res = await fetch('/api/auth/leaderboard', {
+            headers: { 'ngrok-skip-browser-warning': 'true', 'Accept': 'application/json' }
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const pilotos = await res.json();
+        if (!pilotos.length) {
+            lista.innerHTML = '<div class="g-board__empty">Aún no hay carreras terminadas. ¡La primera victoria puede ser tuya!</div>';
+            return;
+        }
+        const yo = pilotNameDisplay.textContent.trim().toLowerCase();
+        const medallas = ['🥇', '🥈', '🥉'];
+        lista.innerHTML = '';
+        pilotos.forEach((p, i) => {
+            const carreras = p.racesCount || 0, victorias = p.winsCount || 0;
+            const pct = carreras > 0 ? ((victorias / carreras) * 100).toFixed(0) : '0';
+            const fila = document.createElement('div');
+            fila.className = 'g-board__row' + (i === 0 ? ' is-first' : '') + (String(p.username).toLowerCase() === yo ? ' is-me' : '');
+            fila.innerHTML = `<span class="g-board__pos">${medallas[i] || (i + 1)}</span>`
+                + `<span class="g-board__name">${escaparHtml(p.username)}</span>`
+                + `<span class="g-board__stat">${victorias} V / ${carreras} C · ${pct}%</span>`;
+            lista.appendChild(fila);
+        });
+    } catch (e) {
+        lista.innerHTML = '<div class="g-board__empty">No se pudo cargar la clasificación. Revisa la conexión con el servidor.</div>';
+    }
+}
 btnCloseLeaderboard.addEventListener('click', () => { leaderboardModal.style.display = "none"; });
 btnDoneLeaderboard.addEventListener('click', () => { leaderboardModal.style.display = "none"; });
 
@@ -465,12 +554,49 @@ const btnSettings = document.getElementById('btnSettings');
 const settingsModal = document.getElementById('settingsModal');
 const btnCloseSettings = document.getElementById('btnCloseSettings');
 const btnSaveSettings = document.getElementById('btnSaveSettings');
-btnSettings.addEventListener('click', () => { settingsModal.style.display = "flex"; });
+const chkHighAccuracy = document.getElementById('chkHighAccuracy');
+const chkAudioAlerts = document.getElementById('chkAudioAlerts');
+const chkTrackBg = document.getElementById('chkTrackBg');
+function abrirAjustes() {
+    chkHighAccuracy.checked = UI.settings.highAccuracy;
+    chkAudioAlerts.checked = UI.settings.audio;
+    if (chkTrackBg) chkTrackBg.checked = UI.settings.trackBg !== false;
+    settingsModal.style.display = "flex";
+}
+btnSettings.addEventListener('click', abrirAjustes);
+const btnSettingsTop = document.getElementById('btnSettingsTop');
+if (btnSettingsTop) btnSettingsTop.addEventListener('click', abrirAjustes);
 btnCloseSettings.addEventListener('click', () => { settingsModal.style.display = "none"; });
 btnSaveSettings.addEventListener('click', () => {
-    alert("Preferencias guardadas correctamente.");
+    UI.settings.highAccuracy = chkHighAccuracy.checked;
+    UI.settings.audio = chkAudioAlerts.checked;
+    if (chkTrackBg) {
+        UI.settings.trackBg = chkTrackBg.checked;
+        if (UI.applyBackground) UI.applyBackground();
+    }
     settingsModal.style.display = "none";
+    UI.toast(UI.settings.audio ? 'Ajustes guardados. Sonido activado.' : 'Ajustes guardados. Sonido desactivado.', 'ok');
+    if (UI.settings.audio && UI.sfx.test) UI.sfx.test();
 });
+
+// Cerrar cualquier modal tocando fuera de él o con Escape
+document.querySelectorAll('.modal-backdrop').forEach(m => {
+    m.addEventListener('click', (e) => { if (e.target === m) m.style.display = 'none'; });
+});
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') document.querySelectorAll('.modal-backdrop').forEach(m => { m.style.display = 'none'; });
+});
+
+// Flechas del carrusel de vehículos
+const ORDEN_CARROS = ['RENAULT_4', 'CHEVROLET_SPARK', 'MAZDA_323'];
+function moverCarro(paso) {
+    const i = Math.max(0, ORDEN_CARROS.indexOf(selectedVehicleMemory));
+    const siguiente = ORDEN_CARROS[(i + paso + ORDEN_CARROS.length) % ORDEN_CARROS.length];
+    window.selectVehicle(siguiente);
+    UI.sfx.select();
+}
+document.getElementById('btnPrevCar').addEventListener('click', () => moverCarro(-1));
+document.getElementById('btnNextCar').addEventListener('click', () => moverCarro(1));
 
 cargarPerfil(activePilot);
 cargarSalasActivas();

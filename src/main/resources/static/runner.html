@@ -2,116 +2,134 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECIRace GO - CLIENT_PLAYER</title>
-    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#2a6fe0">
+    <title>ECIRace GO · En pista</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
-    <link rel="stylesheet" href="css/styles.css">
+    <script>
+        /* Fondo elegido en Ajustes: se aplica antes de pintar para que no parpadee */
+        try { if (localStorage.getItem('ecirace_bg') !== 'imagen') document.documentElement.classList.add('bg-pista'); }
+        catch (e) { document.documentElement.classList.add('bg-pista'); }
+    </script>
+    <link rel="preload" href="fonts/pixelify-sans-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="fonts/vt323-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="css/game.css?v=6">
 </head>
 <body>
-<header>
-    <div class="brand">
-        <a href="lobby.html" style="text-decoration: none; color: inherit; display: flex; align-items: center; gap: 0.5rem;" title="Volver al Lobby">
-            <span>🏁 ECIRace GO</span>
+<canvas id="scene" aria-hidden="true"></canvas>
+
+<main class="game-shell game-shell--runner">
+
+    <!-- ================= Barra superior ================= -->
+    <header class="g-hudbar">
+        <a href="lobby.html" class="g-logo g-logo--small" title="Volver al garaje">
+            <span class="g-logo__main">ECIRACE <span class="g-flag"></span></span>
+            <span class="g-logo__sub">GO!</span>
         </a>
-        <span style="font-size: 0.85rem; color: var(--text-muted); font-weight: normal;">| CLIENT_PLAYER</span>
+        <span class="g-hudbar__spacer"></span>
+        <a href="lobby.html" class="g-btn g-icon-btn" id="btnBackLobby" aria-label="Volver al garaje" style="width:46px;height:46px;">
+            <span class="g-ico" data-icon="home" style="width:28px;height:28px;"></span>
+        </a>
+    </header>
+
+    <div class="g-hudbar g-hudbar--pills">
+        <span class="g-pill g-pill--gold">SALA <span id="roomDisplay">--</span></span>
+        <span class="g-pill g-pill--blue" id="wsStatusDisplay">CONECTANDO...</span>
     </div>
-    <div style="display: flex; gap: 0.5rem; align-items: center;">
-        <a href="lobby.html" class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; text-decoration: none; display: inline-block;">🏠 LOBBY</a>
-        <div class="hud-badge" id="hudStatus">STANDBY</div>
+
+    <div class="g-col g-col--main">
+        <!-- ================= Esperando largada ================= -->
+        <section class="g-panel g-gate" id="raceGateCard" style="display:none;">
+            <div class="g-lights" aria-hidden="true"><i class="is-red"></i><i class="is-red"></i><i class="is-red"></i></div>
+            <h2 class="g-panel__title" style="text-align:center;">Esperando la largada</h2>
+            <p class="g-copy" style="margin: 6px 0 0;">
+                <span class="waiting-pulse"></span>El host de la sala <strong id="gateRoomCode">--</strong> todavía no ha iniciado la carrera. El GPS se activa con la señal de salida.
+            </p>
+        </section>
+
+        <!-- ================= Piloto ================= -->
+        <section class="g-panel">
+            <div class="g-driver">
+                <div class="g-driver__car"><img id="driverCarImg" src="img/renault.png?v=2" alt=""></div>
+                <div style="min-width:0;">
+                    <div class="g-driver__name" id="runnerIdDisplay">Cargando...</div>
+                    <div class="g-driver__meta">
+                        <span>Carrera: <b id="raceStateDisplay">CONSULTANDO...</b></span>
+                        <span>HUD: <b id="hudStatus">STANDBY</b></span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================= Velocímetro + pista ================= -->
+        <section class="g-panel">
+            <div class="g-speedo">
+                <svg id="speedoSvg" viewBox="0 0 300 168" aria-hidden="true"></svg>
+                <div class="g-speedo__read">
+                    <div class="g-speedo__value" id="speedDisplay">0.0</div>
+                    <div class="g-speedo__unit">KM/H</div>
+                </div>
+            </div>
+
+            <div class="g-track" aria-label="Distancia a la meta">
+                <div class="g-track__bar">
+                    <img class="g-track__car" id="trackCarImg" src="img/renault.png?v=2" alt="">
+                </div>
+                <div class="g-track__labels">
+                    <span>SALIDA</span>
+                    <span>Meta a <b id="distMetaDisplay">--</b></span>
+                </div>
+            </div>
+        </section>
+
     </div>
-</header>
 
-<main class="main-container">
-
-    <section class="card" id="raceGateCard" style="display:none; border-color: var(--color-amber);">
-        <div class="card-header">
-            <span class="card-title">🚦 Esperando Señal de Largada</span>
-        </div>
-        <p style="font-size: 0.85rem; color: var(--text-muted);">
-            El host de la sala <strong id="gateRoomCode">--</strong> aún no ha iniciado la carrera.
-            No podrás transmitir tu GPS hasta que él presione "Iniciar Carrera" en el lobby.
-        </p>
-    </section>
-
-    <section class="card">
-        <div class="card-header">
-            <span class="card-title">Identificación del Corredor</span>
-            <span class="hud-badge" id="sourceBadge">HARDWARE GPS</span>
-        </div>
-        <div style="font-family: monospace; font-size: 1.1rem; color: var(--color-amber);">
-            ID: <strong id="runnerIdDisplay">Cargando...</strong>
-        </div>
-        <div class="telemetry-row">
-            <span class="telemetry-label">Sala de Carrera:</span>
-            <span class="telemetry-value" id="roomDisplay" style="color: var(--color-teal); font-weight: bold;">--</span>
-        </div>
-        <div class="telemetry-row">
-            <span class="telemetry-label">Estado de la Carrera:</span>
-            <span class="telemetry-value" id="raceStateDisplay" style="color: var(--color-amber);">CONSULTANDO...</span>
-        </div>
-        <div class="telemetry-row">
-            <span class="telemetry-label">Canal WebSocket:</span>
-            <span class="telemetry-value" id="wsStatusDisplay" style="color: var(--color-amber);">CONECTANDO...</span>
-        </div>
-        <div class="telemetry-row">
-            <span class="telemetry-label">Paquetes Transmitidos (1.5s):</span>
-            <span class="telemetry-value" id="packetsCountDisplay">0</span>
-        </div>
-    </section>
-
-    <section class="card">
-        <div class="gauge-container">
-            <div class="speedometer-circle">
-                <div class="speed-value" id="speedDisplay">0.0</div>
-                <div class="speed-unit">KM / H</div>
+    <div class="g-col g-col--side">
+        <!-- ================= Controles ================= -->
+        <section class="g-panel">
+            <div class="g-controls">
+                <button type="button" id="btnStartGps" class="g-btn g-btn--green" disabled>
+                    <span class="g-ico" data-icon="target"></span><span class="g-btn-label">Iniciar GPS real</span>
+                </button>
+                <button type="button" id="btnStopGps" class="g-btn g-btn--red" disabled>
+                    <span class="g-ico" data-icon="stop"></span><span class="g-btn-label">Detener</span>
+                </button>
+                <button type="button" id="btnToggleSim" class="g-btn g-span" disabled>
+                    <span class="g-ico" data-icon="joystick"></span><span class="g-btn-label">Activar simulador de ruta</span>
+                </button>
+                <button type="button" id="btnSimulateWin" class="g-btn g-btn--gold g-span">
+                    <span class="g-ico" data-icon="trophy"></span><span class="g-btn-label">Simular victoria (ir a la meta)</span>
+                </button>
             </div>
-        </div>
+        </section>
 
-        <div class="card" style="background-color: var(--bg-panel2); margin-top: 1rem;">
-            <div class="telemetry-row">
-                <span class="telemetry-label">Latitud:</span>
-                <span class="telemetry-value" id="latDisplay">--.------</span>
-            </div>
-            <div class="telemetry-row">
-                <span class="telemetry-label">Longitud:</span>
-                <span class="telemetry-value" id="lngDisplay">--.------</span>
-            </div>
-            <div class="telemetry-row">
-                <span class="telemetry-label">Precisión GPS:</span>
-                <span class="telemetry-value" id="accDisplay">-- m</span>
-            </div>
-            <div class="telemetry-row">
-                <span class="telemetry-label">Hora de Captura:</span>
-                <span class="telemetry-value" id="timeDisplay">--:--:--</span>
-            </div>
-        </div>
-    </section>
+        <!-- ================= Telemetría ================= -->
+        <section class="g-panel g-panel--plain">
+            <details class="g-details">
+                <summary>Telemetría del GPS</summary>
+                <div class="g-tiles">
+                    <div class="g-tile"><span class="g-tile__k">Latitud</span><span class="g-tile__v" id="latDisplay">--.------</span></div>
+                    <div class="g-tile"><span class="g-tile__k">Longitud</span><span class="g-tile__v" id="lngDisplay">--.------</span></div>
+                    <div class="g-tile"><span class="g-tile__k">Precisión</span><span class="g-tile__v" id="accDisplay">-- m</span></div>
+                    <div class="g-tile"><span class="g-tile__k">Última lectura</span><span class="g-tile__v" id="timeDisplay">--:--:--</span></div>
+                    <div class="g-tile"><span class="g-tile__k">Paquetes enviados</span><span class="g-tile__v" id="packetsCountDisplay">0</span></div>
+                    <div class="g-tile"><span class="g-tile__k">Fuente</span><span class="g-tile__v" id="sourceBadge">GPS</span></div>
+                </div>
+            </details>
+        </section>
 
-    <section class="card">
-        <div class="grid-2">
-            <button type="button" id="btnStartGps" class="btn btn-primary" disabled>📡 Iniciar GPS Real</button>
-            <button type="button" id="btnStopGps" class="btn btn-danger" disabled>🛑 Detener Rastreo</button>
-        </div>
-        <div style="margin-top: 0.75rem;">
-            <button type="button" id="btnToggleSim" class="btn btn-secondary" disabled>🎮 Activar Simulador de Ruta (Campus ECI)</button>
-        </div>
-        <div style="margin-top: 1rem; border-top: 1px dashed var(--border-line); padding-top: 1rem;">
-            <button type="button" id="btnSimulateWin" class="btn" style="background: linear-gradient(135deg, #FFD700, #FFA500); color: #000; font-weight: bold; width: 100%;">
-                🏁 Simular Victoria (Teletransporte a Meta)
-            </button>
-        </div>
-    </section>
-
-    <section class="card">
-        <div class="card-header">
-            <span class="card-title">Registro de Sensor</span>
-        </div>
-        <div class="log-box" id="eventLog">
-            <div class="log-entry info">[CLIENT_PLAYER] Módulo de geolocalización cargado.</div>
-        </div>
-    </section>
+        <section class="g-panel g-panel--plain">
+            <details class="g-details">
+                <summary>Radio del equipo</summary>
+                <div class="log-box" id="eventLog">
+                    <div class="log-entry info">[PILOTO] Módulo de geolocalización cargado.</div>
+                </div>
+            </details>
+        </section>
+    </div>
 </main>
-<script src="js/runner.js?v=4"></script>
+
+<script src="js/game-ui.js?v=4"></script>
+<script src="js/runner.js?v=6"></script>
 </body>
 </html>

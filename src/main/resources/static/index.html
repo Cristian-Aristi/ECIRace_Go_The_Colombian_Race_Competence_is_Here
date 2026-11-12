@@ -2,143 +2,107 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECIRace GO - Acceso y Detección de Dispositivo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#2a6fe0">
+    <title>ECIRace GO · Inicio</title>
     <!-- SDK Oficial de Google Identity Services -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <link rel="stylesheet" href="css/styles.css">
-    <style>
-        .role-switch-container {
-            display: flex;
-            background-color: var(--bg-panel2);
-            border-radius: 0.5rem;
-            padding: 0.25rem;
-            margin-bottom: 1.25rem;
-            border: 1px solid var(--border-line);
-        }
-        .role-tab {
-            flex: 1;
-            padding: 0.65rem 0.5rem;
-            text-align: center;
-            font-size: 0.85rem;
-            font-weight: 600;
-            cursor: pointer;
-            border-radius: 0.35rem;
-            color: var(--text-muted);
-            transition: all 0.2s ease;
-        }
-        .role-tab.active {
-            background-color: var(--color-amber);
-            color: #14171a;
-            box-shadow: 0 2px 8px rgba(232, 163, 61, 0.3);
-        }
-        .device-indicator {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.4rem;
-            font-size: 0.75rem;
-            color: var(--color-teal);
-            font-family: monospace;
-            background: rgba(63, 167, 150, 0.12);
-            padding: 0.2rem 0.55rem;
-            border-radius: 999px;
-            border: 1px solid var(--color-teal);
-        }
-    </style>
+    <script>
+        /* Fondo elegido en Ajustes: se aplica antes de pintar para que no parpadee */
+        try { if (localStorage.getItem('ecirace_bg') !== 'imagen') document.documentElement.classList.add('bg-pista'); }
+        catch (e) { document.documentElement.classList.add('bg-pista'); }
+    </script>
+    <link rel="preload" href="fonts/pixelify-sans-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="fonts/vt323-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="css/game.css?v=6">
 </head>
 <body>
-<header>
-    <div class="brand">
-        <span>🏁 ECIRace GO</span>
-        <span style="font-size: 0.85rem; color: var(--text-muted); font-weight: normal;">| PORTAL DE ACCESO</span>
-    </div>
-    <div class="device-indicator" id="deviceBadge">
-        <span id="deviceIcon">🖥️</span> <span id="deviceText">DETECTANDO...</span>
-    </div>
-</header>
+<canvas id="scene" aria-hidden="true"></canvas>
 
-<main class="main-container">
+<main class="game-shell game-shell--index">
 
-    <section class="card" id="activeSessionBanner" style="display: none; border-color: var(--color-teal); background-color: rgba(63, 167, 150, 0.08);">
-        <div class="card-header" style="margin-bottom: 0.5rem;">
-            <span class="card-title" style="color: var(--color-teal); font-size: 1rem;">Sesión Detectada en este Dispositivo</span>
-            <span class="hud-badge" style="color: var(--color-teal); border-color: var(--color-teal);">ACTIVA</span>
-        </div>
-        <div style="font-size: 0.9rem; margin-bottom: 1rem;">
-            Piloto actual: <strong id="savedPilotName" style="color: var(--color-amber);">--</strong>
-        </div>
-        <div class="grid-2">
-            <button type="button" class="btn btn-primary" id="btnContinueToLobby">
-                🏁 Ir Directo al Lobby ▶
-            </button>
-            <button type="button" class="btn btn-secondary" id="btnLogoutCurrent">
-                🚪 Salir / Cambiar Piloto
-            </button>
-        </div>
-    </section>
-
-    <div class="role-switch-container">
-        <div class="role-tab" id="tabDesktop" onclick="switchRole('DESKTOP')">
-            🖥️ Central / Host (PC)
-        </div>
-        <div class="role-tab" id="tabMobile" onclick="switchRole('MOBILE')">
-            📱 Piloto en Pista (Smartphone)
-        </div>
-    </div>
-
-    <section class="card" id="desktopView" style="display: none;">
-        <div class="card-header">
-            <span class="card-title">🖥️ Puesto de Control Central (Host)</span>
-            <span class="hud-badge" style="color: var(--color-amber); border-color: var(--color-amber);">HOST MODE</span>
-        </div>
-        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.25rem; line-height: 1.5;">
-            Estás conectado desde un <strong>computador</strong>. Como anfitrión o monitor de carrera, puedes crear una sala para proyectar el mapa en vivo en pantalla grande y recibir la telemetría de los corredores móviles.
-        </p>
-
-        <div style="background-color: var(--bg-panel2); border: 1px solid var(--border-line); border-radius: 0.6rem; padding: 1.25rem; margin-bottom: 1.25rem;">
-            <label style="display: block; font-size: 0.85rem; color: var(--text-paper); font-weight: 600; margin-bottom: 0.5rem; font-family: monospace;">
-                CÓDIGO DE LA SALA (OPCIONAL O DEJA VACÍO PARA AUTOGENERAR):
-            </label>
-            <input
-                    type="text"
-                    id="hostRoomCodeInput"
-                    class="input-text"
-                    placeholder="Ej. ECI-2026 o CIRCUITO-1"
-                    maxlength="16"
-                    autocomplete="off"
-            />
-            <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem;">
-                Si lo dejas en blanco, el servidor generará un código único automáticamente (ej. <code>ECI-8431</code>).
+    <div class="g-col g-col--left">
+        <header class="g-title-screen">
+            <h1 class="g-logo" style="margin:0;">
+                <span class="g-logo__main">ECIRACE <span class="g-flag"></span></span>
+                <span class="g-logo__sub">GO!</span>
+            </h1>
+            <div class="g-press">La carrera del campus en tiempo real</div>
+            <div class="g-device" id="deviceBadge">
+                <span id="deviceIcon">🖥️</span> <span id="deviceText">DETECTANDO...</span>
             </div>
+        </header>
+
+        <!-- Sesión guardada en este dispositivo -->
+        <section class="g-panel g-session" id="activeSessionBanner" style="display: none;">
+            <div class="g-panel__head">
+                <span class="g-ico g-ico--lg" data-icon="helmet"></span>
+                <h2 class="g-panel__title">¡Hola de nuevo, <span id="savedPilotName" style="color: var(--gold);">--</span>!</h2>
+                <span class="g-pill g-pill--teal">ACTIVA</span>
+            </div>
+            <div class="g-two">
+                <button type="button" class="g-btn g-btn--gold" id="btnContinueToLobby">
+                    <span class="g-ico" data-icon="flag"></span><span class="g-btn-label">Ir al garaje</span>
+                </button>
+                <button type="button" class="g-btn" id="btnLogoutCurrent">
+                    <span class="g-ico" data-icon="door"></span><span class="g-btn-label">Cambiar piloto</span>
+                </button>
+            </div>
+        </section>
+
+    </div>
+
+    <div class="g-col g-col--right">
+        <!-- Selección de modo -->
+        <div class="g-modes" role="tablist" aria-label="Modo de juego">
+            <button type="button" class="role-tab" id="tabDesktop" role="tab" onclick="switchRole('DESKTOP')">
+                <span class="g-ico" data-icon="monitor" style="width:40px;height:34px;"></span>
+                Centro de control
+                <small>Host · Computador</small>
+            </button>
+            <button type="button" class="role-tab" id="tabMobile" role="tab" onclick="switchRole('MOBILE')">
+                <span class="g-ico" data-icon="phone" style="width:40px;height:34px;"></span>
+                Piloto en pista
+                <small>Celular con GPS</small>
+            </button>
         </div>
 
-        <button type="button" class="btn btn-primary" id="btnCreateRoomAndGo" style="font-size: 1.1rem; padding: 0.95rem;">
-            🚀 CREAR SALA Y ABRIR DASHBOARD ▶
-        </button>
+        <!-- Modo host -->
+        <section class="g-panel" id="desktopView" style="display: none;">
+            <div class="g-panel__head">
+                <span class="g-ico g-ico--lg" data-icon="map"></span>
+                <h2 class="g-panel__title">Abrir el centro de control</h2>
+                <span class="g-pill g-pill--gold">HOST</span>
+            </div>
+            <p class="g-copy">Proyecta el mapa en vivo en una pantalla grande y mira a cada piloto con su carro mientras corre hacia la meta.</p>
 
-        <div style="margin-top: 1.25rem; text-align: center; border-top: 1px dashed var(--border-line); padding-top: 1rem;">
-            <span style="font-size: 0.8rem; color: var(--text-muted);">
-                ¿Quieres probar como corredor en este mismo equipo?
-                <a href="javascript:void(0)" onclick="switchRole('MOBILE')" style="color: var(--color-amber); font-weight: 600;">Ingresar como Piloto</a>
-            </span>
-        </div>
-    </section>
+            <label class="g-label" for="hostRoomCodeInput">CÓDIGO DE LA SALA (OPCIONAL):</label>
+            <div class="g-field">
+                <span class="g-ico" data-icon="pencil"></span>
+                <input type="text" id="hostRoomCodeInput" placeholder="Ej. ECI-2026" maxlength="16" autocomplete="off">
+            </div>
+            <p class="g-copy" style="margin: 6px 0 16px; font-size: 1.1rem; color: var(--text-dim);">Si lo dejas vacío, el servidor crea uno (ej. ECI-8431).</p>
 
-    <section class="card" id="mobileView" style="display: none;">
-        <div class="card-header">
-            <span class="card-title">📱 Identificación de Piloto (Móvil)</span>
-            <span class="hud-badge">PILOT LOGIN</span>
-        </div>
-        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.25rem; line-height: 1.4;">
-            Conéctate desde tu smartphone para vincularte a una sala de carrera y transmitir tus sensores GPS en la pista.
-        </p>
+            <button type="button" class="g-race-btn" id="btnCreateRoomAndGo" style="font-size: clamp(1.2rem, 6vw, 1.7rem);">
+                <span class="g-ico" data-icon="flag"></span>
+                <span class="g-btn-label">CREAR SALA ▷</span>
+            </button>
 
-        <div style="background-color: var(--bg-panel2); border: 1px solid var(--border-line); border-radius: 0.6rem; padding: 1.25rem; margin-bottom: 1.25rem; text-align: center;">
-            <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-paper); margin-bottom: 0.75rem;">
-                OPCIÓN 1: INICIAR SESIÓN CON GOOGLE
+            <p class="g-foot" style="margin: 16px 0 0; text-shadow:none; color: var(--text-dim);">
+                ¿Vas a correr desde este equipo?
+                <button type="button" class="g-link" onclick="switchRole('MOBILE')">Entrar como piloto</button>
+            </p>
+        </section>
+
+        <!-- Modo piloto -->
+        <section class="g-panel" id="mobileView" style="display: none;">
+            <div class="g-panel__head">
+                <span class="g-ico g-ico--lg" data-icon="helmet"></span>
+                <h2 class="g-panel__title">Identifícate, piloto</h2>
+                <span class="g-pill g-pill--teal">PILOT LOGIN</span>
             </div>
 
-            <div style="display: flex; justify-content: center; margin-bottom: 0.5rem;">
+            <div class="g-google">
                 <div id="g_id_onload"
                      data-client_id="882582914104-example.apps.googleusercontent.com"
                      data-context="signin"
@@ -146,7 +110,6 @@
                      data-callback="handleCredentialResponse"
                      data-auto_prompt="false">
                 </div>
-
                 <div class="g_id_signin"
                      data-type="standard"
                      data-shape="rectangular"
@@ -155,97 +118,62 @@
                      data-size="large"
                      data-logo_alignment="left">
                 </div>
-            </div>
-            <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.6rem;">
-                Sincroniza tus estadísticas y verifica tu identidad en la nube de ECIRace.
-            </div>
-            <button type="button" class="btn btn-secondary" id="btnSimulateGoogle" style="font-size: 0.75rem; padding: 0.45rem 0.9rem; width: auto; display: inline-flex;" title="Permite probar el flujo de Google sin registrar un Client ID en Google Cloud">
-                🧪 Probar Flujo Google sin Client ID
-            </button>
-        </div>
-
-        <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem;">
-            <div style="flex: 1; height: 1px; background-color: var(--border-line);"></div>
-            <span style="font-size: 0.75rem; color: var(--text-muted); font-family: monospace;">O BIEN</span>
-            <div style="flex: 1; height: 1px; background-color: var(--border-line);"></div>
-        </div>
-
-        <div style="background-color: var(--bg-panel2); border: 1px solid var(--border-line); border-radius: 0.6rem; padding: 1.25rem;">
-            <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-paper); margin-bottom: 0.5rem;">
-                OPCIÓN 2: INGRESO COMO PILOTO INVITADO
-            </div>
-            <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">
-                Elige tu apodo o tag de carreras para ingresar de inmediato al lobby:
-            </p>
-
-            <div style="display: flex; flex-direction: column; gap: 0.75rem;">
-                <input
-                        type="text"
-                        id="guestInput"
-                        class="input-text"
-                        placeholder="Ej. Daniel / Cristian / Santiago"
-                        maxlength="16"
-                        autocomplete="off"
-                />
-
-                <button type="button" class="btn btn-primary" id="btnEnterGuest">
-                    🚀 Entrar al Lobby como Invitado ▶
+                <button type="button" class="g-link" id="btnSimulateGoogle"
+                        title="Permite probar el flujo de Google sin registrar un Client ID en Google Cloud">
+                    Probar el inicio con Google sin Client ID
                 </button>
             </div>
 
-            <div style="margin-top: 1rem; border-top: 1px dashed var(--border-line); padding-top: 0.75rem;">
-                <span style="font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 0.5rem;">
-                    Pilotos de demostración (Mockup con estadísticas cargadas):
-                </span>
-                <div class="grid-3">
-                    <button type="button" class="btn btn-secondary" id="btnQuickDaniel" style="font-size: 0.8rem; padding: 0.5rem;">
-                        👤 Daniel (Demo)
-                    </button>
-                    <button type="button" class="btn btn-secondary" id="btnQuickCristian" style="font-size: 0.8rem; padding: 0.5rem;">
-                        👤 Cristian (Demo)
-                    </button>
-                    <button type="button" class="btn btn-secondary" id="btnQuickSantiago" style="font-size: 0.8rem; padding: 0.5rem;">
-                        👤 Santiago (Demo)
-                    </button>
+            <div class="g-divider">o entra como invitado</div>
+
+            <label class="g-label" for="guestInput">TU TAG DE PILOTO:</label>
+            <div class="g-row">
+                <div class="g-field">
+                    <span class="g-ico" data-icon="tag"></span>
+                    <input type="text" id="guestInput" placeholder="Ej. Daniel" maxlength="16" autocomplete="off">
                 </div>
             </div>
-        </div>
+            <button type="button" class="g-race-btn" id="btnEnterGuest" style="margin-top: 14px; font-size: clamp(1.3rem, 6.5vw, 1.9rem);">
+                <span class="g-ico" data-icon="flag"></span>
+                <span class="g-btn-label">ENTRAR ▷</span>
+            </button>
 
-        <div style="margin-top: 1.25rem; text-align: center; border-top: 1px dashed var(--border-line); padding-top: 1rem;">
-            <span style="font-size: 0.8rem; color: var(--text-muted);">
-                ¿Deseas abrir la Central de Control en este dispositivo?
-                <a href="javascript:void(0)" onclick="switchRole('DESKTOP')" style="color: var(--color-amber); font-weight: 600;">Modo Central (PC)</a>
-            </span>
-        </div>
-    </section>
+            <span class="g-label" style="margin-top: 18px;">PILOTOS DE PRUEBA:</span>
+            <div class="g-quick">
+                <button type="button" class="g-btn" id="btnQuickDaniel">Daniel</button>
+                <button type="button" class="g-btn" id="btnQuickCristian">Cristian</button>
+                <button type="button" class="g-btn" id="btnQuickSantiago">Santiago</button>
+            </div>
+
+            <p class="g-foot" style="margin: 16px 0 0; text-shadow:none; color: var(--text-dim);">
+                ¿Quieres proyectar el mapa en este dispositivo?
+                <button type="button" class="g-link" onclick="switchRole('DESKTOP')">Centro de control</button>
+            </p>
+        </section>
+    </div>
 
 </main>
 
+<!-- Confirmar tag tras Google -->
 <div class="modal-backdrop" id="googleTagModal" style="display: none;">
-    <div class="modal-content">
-        <div class="card-header">
-            <span class="card-title">Confirmar Tag de Carrera</span>
+    <div class="modal-content g-panel" role="dialog" aria-modal="true" aria-labelledby="gTagTitle">
+        <div class="g-panel__head" style="margin:0;">
+            <span class="g-ico g-ico--lg" data-icon="tag"></span>
+            <h2 class="g-panel__title" id="gTagTitle">Confirma tu tag</h2>
         </div>
-        <p style="font-size: 0.85rem; color: var(--text-muted);">
-            ¡Cuenta de Google autenticada! Confirma el nombre o alias que verán tus rivales en pista:
-        </p>
-        <input
-                type="text"
-                id="googleTagInput"
-                class="input-text"
-                placeholder="Nombre de piloto"
-                maxlength="16"
-        />
-        <div class="grid-2">
-            <button type="button" class="btn btn-primary" id="btnConfirmGoogleTag">
-                🏁 Confirmar e Ir al Lobby ▶
-            </button>
-            <button type="button" class="btn btn-secondary" id="btnCancelGoogleTag">
-                Cancelar
-            </button>
+        <p class="g-copy" style="margin:0;">Cuenta de Google verificada. ¿Con qué nombre te verán tus rivales en la pista?</p>
+        <div class="g-field">
+            <span class="g-ico" data-icon="pencil"></span>
+            <input type="text" id="googleTagInput" placeholder="Nombre de piloto" maxlength="16" autocomplete="off">
+        </div>
+        <div class="g-two">
+            <button type="button" class="g-btn g-btn--gold" id="btnConfirmGoogleTag">Ir al garaje</button>
+            <button type="button" class="g-btn" id="btnCancelGoogleTag">Cancelar</button>
         </div>
     </div>
 </div>
-<script src="js/index.js?v=2"></script>
+
+<script src="js/game-ui.js?v=4"></script>
+<script src="js/index.js?v=3"></script>
 </body>
 </html>

@@ -1,9 +1,20 @@
+// Capa visual de juego (game-ui.js), con respaldo si no cargara
+const UI = window.GameUI || {
+    toast: (m) => alert(m),
+    setLabel: (b, t) => { if (b) b.textContent = t; },
+    countdown: () => Promise.resolve(),
+    confetti: () => {},
+    sfx: { win() {}, coin() {}, error() {} },
+    icon: () => ''
+};
+
 const urlParams = new URLSearchParams(window.location.search);
 const roomCode = (urlParams.get('room') || 'CAMPUS-ECI').toUpperCase();
 document.getElementById('roomCodeDisplay').innerText = roomCode;
 
 const campusCenter = [4.782800, -74.043000];
 const map = L.map('map').setView(campusCenter, 16);
+map.zoomControl.setPosition('bottomright');   // arriba a la izquierda queda tapado por el panel
 
 let metaCoordenadas = [4.782800, -74.043000];
 let metaLayer = null;
@@ -16,7 +27,22 @@ metaLayer = L.circle(metaCoordenadas, {
     dashArray: '6, 6'
 }).addTo(map);
 
-metaLayer.bindPopup("<div style='text-align:center;'><b>🏁 LÍNEA DE LLEGADA</b><br>Haz clic en el mapa para mover la meta (Solo en modo WAITING)</div>");
+metaLayer.bindPopup("<div style='text-align:center;'><b>🏁 LÍNEA DE LLEGADA</b><br>Activa «Mover la meta» y haz clic en el mapa (solo antes de la largada)</div>");
+
+const metaFlag = L.marker(metaCoordenadas, {
+    icon: L.divIcon({
+        className: 'g-flag-marker',
+        html: `<div style="width:40px;height:40px;filter:drop-shadow(0 3px 0 rgba(0,0,0,.45));">${UI.icon('flag')}</div>`,
+        iconSize: [40, 40],
+        iconAnchor: [4, 38]
+    }),
+    interactive: false,
+    zIndexOffset: 500
+}).addTo(map);
+function moverMetaVisual() {
+    metaLayer.setLatLng(metaCoordenadas);
+    metaFlag.setLatLng(metaCoordenadas);
+}
 
 let settingMetaMode = false;
 
@@ -26,21 +52,16 @@ const metaModeStatus = document.getElementById('metaModeStatus');
 function actualizarBotonMetaUI() {
     if (!btnToggleMetaMode || !metaModeStatus) return;
 
-    if (settingMetaMode) {
-        btnToggleMetaMode.style.borderColor = 'var(--color-amber)';
-        metaModeStatus.textContent = 'ACTIVADO (Haz clic en el mapa)';
-        metaModeStatus.style.color = 'var(--color-amber)';
-    } else {
-        btnToggleMetaMode.style.borderColor = 'var(--border-line)';
-        metaModeStatus.textContent = 'DESACTIVADO';
-        metaModeStatus.style.color = 'var(--color-alert)';
-    }
+    btnToggleMetaMode.classList.toggle('is-on', settingMetaMode);
+    btnToggleMetaMode.setAttribute('aria-pressed', String(settingMetaMode));
+    metaModeStatus.textContent = settingMetaMode ? 'ACTIVADO (clic en el mapa)' : 'DESACTIVADO';
+    document.getElementById('map').style.cursor = settingMetaMode ? 'crosshair' : '';
 }
 
 if (btnToggleMetaMode) {
     btnToggleMetaMode.addEventListener('click', () => {
         if (raceStatusValue && raceStatusValue.textContent !== 'WAITING') {
-            alert("⚠️ No puedes cambiar la meta una vez que la carrera ha comenzado.");
+            UI.toast("La meta no se puede mover con la carrera en curso.", 'warn');
             return;
         }
         settingMetaMode = !settingMetaMode;
@@ -51,11 +72,11 @@ if (btnToggleMetaMode) {
 map.on('click', async function(e) {
     if (raceStatusValue && raceStatusValue.textContent === 'WAITING' && settingMetaMode) {
         metaCoordenadas = [e.latlng.lat, e.latlng.lng];
-        metaLayer.setLatLng(metaCoordenadas);
+        moverMetaVisual();
         programarLeaderboard();
         L.popup()
             .setLatLng(e.latlng)
-            .setContent("<b>🏁 ¡Meta Actualizada!</b><br>Puedes seguir haciendo clic para reubicarla o apagar el botón.")
+            .setContent("<b>🏁 ¡Meta movida!</b><br>Sigue haciendo clic para reubicarla o apaga el botón.")
             .openOn(map);
 
         try {
@@ -115,10 +136,10 @@ map.on('zoomstart', () => { if (!ajusteProgramatico) { autoEncuadre = false; act
 
 const controlEncuadre = L.control({ position: 'bottomright' });
 controlEncuadre.onAdd = function () {
-    const btn = L.DomUtil.create('button', 'btn btn-secondary');
+    const btn = L.DomUtil.create('button', 'g-btn');
     btn.type = 'button';
     btn.id = 'btnEncuadre';
-    btn.style.cssText = 'width:auto;padding:0.45rem 0.8rem;font-size:0.8rem;cursor:pointer;';
+    btn.style.cssText = 'font-size:0.9rem;min-height:40px;';
     L.DomEvent.disableClickPropagation(btn);
     L.DomEvent.on(btn, 'click', () => { autoEncuadre = true; actualizarBotonEncuadre(); encuadrarCorredores(true); });
     return btn;
@@ -143,70 +164,17 @@ const raceStatusValue = document.getElementById('raceStatusValue');
 const btnStartRaceDashboard = document.getElementById('btnStartRaceDashboard');
 const eventLog = document.getElementById('eventLog');
 
-// --- Estilos de los marcadores de vehículo en el mapa ---
-(function inyectarEstilosCarros() {
-    if (document.getElementById('ecirace-car-styles')) return;
-    const style = document.createElement('style');
-    style.id = 'ecirace-car-styles';
-    style.textContent = `
-        .vehicle-marker {
-            background: transparent !important;
-            border: none !important;
-            box-shadow: none !important;
-        }
-        .vehicle-marker .vehicle-label {
-            position: absolute;
-            left: 50%;
-            bottom: 100%;
-            transform: translateX(-50%);
-            margin-bottom: 2px;
-            background: rgba(15, 23, 42, 0.9);
-            color: #00f5d4;
-            border: 1px solid #00f5d4;
-            font-family: monospace;
-            font-size: 11px;
-            font-weight: bold;
-            padding: 2px 6px;
-            border-radius: 6px;
-            white-space: nowrap;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.6);
-            pointer-events: none;
-        }
-        .vehicle-marker .vehicle-label.suspicious {
-            background: rgba(220, 38, 38, 0.95);
-            color: #fff;
-            border-color: #fff;
-        }
-        .vehicle-marker .vehicle-img {
-            display: block;
-            width: 100%;
-            height: 100%;
-            object-fit: contain;
-            filter: drop-shadow(0 3px 4px rgba(0,0,0,0.65));
-            transition: transform 0.3s linear;
-        }
-        .vehicle-marker.suspicious .vehicle-img {
-            filter: drop-shadow(0 0 6px #dc2626) drop-shadow(0 0 2px #fff);
-        }
-        .runner-thumb {
-            width: 22px;
-            height: 22px;
-            object-fit: contain;
-            vertical-align: middle;
-            margin-right: 6px;
-        }
-    `;
-    document.head.appendChild(style);
-})();
+// Los estilos de los marcadores de carros están en css/game.css
 
 // --- Catálogo: valor del enum VehicleType (lo que elige el Lobby) -> imagen en /img ---
 const VEHICULO_POR_DEFECTO = 'RENAULT_4';
 const CATALOGO_VEHICULOS = {
-    'RENAULT_4':       '/img/renault.png',
-    'CHEVROLET_SPARK': '/img/spark.png',
-    'MAZDA_323':       '/img/mazda.png'
+    'RENAULT_4':       '/img/renault.png?v=2',
+    'CHEVROLET_SPARK': '/img/spark.png?v=2',
+    'MAZDA_323':       '/img/mazda.png?v=2'
 };
-const TAMANO_ICONO = 48; // px
+// En pantallas grandes (proyector / PC) los carros se ven más grandes en el mapa
+const TAMANO_ICONO = window.innerWidth >= 1200 ? 64 : 48; // px
 
 // Devuelve siempre una clave válida del catálogo (nunca un emoji ni un valor raro)
 function resolverVehiculo(ubication) {
@@ -268,8 +236,7 @@ function conectarWebSocket() {
         statusDisplay.innerText = "En Vivo (Conectado)";
         statusDisplay.style.color = "var(--color-teal)";
         hostStatusBadge.innerText = "ONLINE";
-        hostStatusBadge.style.color = "var(--color-teal)";
-        hostStatusBadge.style.borderColor = "var(--color-teal)";
+        hostStatusBadge.className = 'g-pill g-pill--teal';
 
         stompClient.subscribe('/topic/rooms/' + roomCode, function (mensaje) {
             const ubication = JSON.parse(mensaje.body);
@@ -284,7 +251,7 @@ function conectarWebSocket() {
         statusDisplay.innerText = "Desconectado. Reintentando...";
         statusDisplay.style.color = "var(--color-alert)";
         hostStatusBadge.innerText = "OFFLINE";
-        hostStatusBadge.style.color = "var(--color-alert)";
+        hostStatusBadge.className = 'g-pill g-pill--red';
         setTimeout(conectarWebSocket, 5000);
     });
 }
@@ -388,11 +355,12 @@ function aplicarEstadoDeSala(room) {
         const cambio = Math.abs(room.metaLat - metaCoordenadas[0]) > 1e-9 || Math.abs(room.metaLon - metaCoordenadas[1]) > 1e-9;
         if (cambio) {
             metaCoordenadas = [room.metaLat, room.metaLon];
-            metaLayer.setLatLng(metaCoordenadas);
+            moverMetaVisual();
         }
     }
     if (room.status !== ultimoEstadoLogueado) {
         log(`👥 Sala ${roomCode} | Estado: ${room.status}`, 'info');
+        if (room.status === 'IN_PROGRESS' && ultimoEstadoLogueado === 'WAITING') UI.countdown();
         ultimoEstadoLogueado = room.status;
     }
 
@@ -426,32 +394,36 @@ function aplicarEstadoDeSala(room) {
         carreraTerminada = true;
         const ganador = room.winnerId || "Ninguno";
 
-        const banner = document.createElement('div');
-        banner.id = 'victoryBannerDash';
-        banner.style.cssText = `
-            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
-            background: linear-gradient(135deg, #FFD700, #FFA500); color: #000;
-            padding: 1.2rem 2.5rem; border-radius: 12px; font-size: 1.2rem;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.7); font-family: monospace;
-            font-weight: bold; text-align: center; z-index: 9999; border: 3px solid #fff;
-        `;
-        banner.innerHTML = `🏁 ¡CARRERA FINALIZADA! 🏁<br><span style="font-size:1rem;">🏆 GANADOR INDISCUTIBLE: <b>${ganador}</b></span>`;
-        document.body.appendChild(banner);
+        const overlay = document.createElement('div');
+        overlay.id = 'victoryBannerDash';
+        overlay.className = 'g-result';
+        overlay.setAttribute('role', 'alertdialog');
+        const ganadorSeguro = escaparHtml(ganador);
+        const carroGanador = corredores[ganador] ? CATALOGO_VEHICULOS[corredores[ganador].car] : null;
+        overlay.innerHTML = `
+            <div class="g-result__card g-panel">
+                <div class="g-result__trophy">${UI.icon('trophy')}</div>
+                <h2 class="g-result__title">🏁 ¡CARRERA FINALIZADA! 🏁</h2>
+                <div class="g-result__sub">🏆 GANADOR INDISCUTIBLE: <b>${ganadorSeguro}</b></div>
+                ${carroGanador ? `<img src="${carroGanador}" alt="" style="width:90px;height:90px;margin:0 auto;object-fit:contain;image-rendering:pixelated;transform:rotate(90deg);">` : ''}
+                <button type="button" class="g-btn g-btn--gold" id="btnCloseVictoryDash">Ver el mapa</button>
+            </div>`;
+        document.body.appendChild(overlay);
+        overlay.querySelector('#btnCloseVictoryDash').addEventListener('click', () => { overlay.style.display = 'none'; });
+        UI.sfx.win();
+        UI.confetti(4500);
 
         if (typeof map !== 'undefined' && typeof metaCoordenadas !== 'undefined') {
             map.flyTo(metaCoordenadas, 18, { animate: true, duration: 1.5 });
         }
 
-        setTimeout(() => {
-            alert(`🏁 ¡CARRERA FINALIZADA!\n\n🏆 GANADOR INDISCUTIBLE: ${ganador}`);
-        }, 1000);
     }
 }
 
 btnStartRaceDashboard.addEventListener('click', async () => {
     if (!hostNameDeLaSala) return;
     btnStartRaceDashboard.disabled = true;
-    btnStartRaceDashboard.textContent = "⏳ Iniciando...";
+    UI.setLabel(btnStartRaceDashboard, "INICIANDO...");
     try {
         const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}/start`, {
             method: 'POST',
@@ -468,9 +440,9 @@ btnStartRaceDashboard.addEventListener('click', async () => {
         if (!res.ok) throw new Error();
         log('🏁 Carrera iniciada por el host.', 'info');
     } catch (e) {
-        alert('Error de red al iniciar la carrera.');
+        UI.toast('No se pudo iniciar la carrera: revisa la conexión con el servidor.', 'error');
         btnStartRaceDashboard.disabled = false;
-        btnStartRaceDashboard.textContent = "🚀 Iniciar Carrera";
+        UI.setLabel(btnStartRaceDashboard, "INICIAR CARRERA");
     }
 });
 
@@ -478,7 +450,7 @@ btnStartRaceDashboard.addEventListener('click', async () => {
 function renderizarListaCorredores() {
     activeCountDisplay.innerText = `${ultimoRosterConocido.length} / 6`;
     if (ultimoRosterConocido.length === 0) {
-        runnersList.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 0.5rem 0;">Esperando corredores...</div>';
+        runnersList.innerHTML = '<div style="color: var(--text-dim); text-align: center; padding: 6px 0;">Esperando pilotos... comparte el enlace con «Invitar».</div>';
         return;
     }
     runnersList.innerHTML = '';
@@ -498,11 +470,20 @@ function renderizarListaCorredores() {
     });
 }
 
+function copiarTexto(texto, aviso) {
+    const ok = () => UI.toast(aviso, 'ok');
+    const fallo = () => UI.toast(`Copia este texto: ${texto}`, 'warn', 7000);
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(texto).then(ok, fallo);
+    } else {
+        fallo();
+    }
+}
 document.getElementById('btnCopyRoom').addEventListener('click', () => {
-    navigator.clipboard.writeText(roomCode).then(() => alert(`Código copiado: ${roomCode}`));
+    copiarTexto(roomCode, `Código copiado: ${roomCode}`);
 });
 document.getElementById('btnShareLink').addEventListener('click', () => {
-    navigator.clipboard.writeText(`${window.location.origin}/lobby.html?room=${encodeURIComponent(roomCode)}`).then(() => alert('🔗 Enlace copiado.'));
+    copiarTexto(`${window.location.origin}/lobby.html?room=${encodeURIComponent(roomCode)}`, 'Enlace de invitación copiado. ¡Compártelo con los pilotos!');
 });
 
 // ===================== 🏆 TABLA DE POSICIONES =====================

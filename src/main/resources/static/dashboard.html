@@ -2,300 +2,94 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECIRace GO - Tablero Central de Sala</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0e1a3a">
+    <title>ECIRace GO · Centro de control</title>
 
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
-    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
-    <link rel="stylesheet" href="css/styles.css?v=2">
 
-    <style>
-        body {
-            margin: 0;
-            padding: 0;
-            height: 100vh;
-            overflow: hidden;
-            background-color: var(--bg-asphalt);
-        }
-        #map {
-            height: 100vh;
-            width: 100vw;
-            position: absolute;
-            top: 0;
-            left: 0;
-            z-index: 1;
-        }
-        .dashboard-overlay {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            z-index: 1000;
-            background-color: rgba(28, 32, 36, 0.94);
-            backdrop-filter: blur(8px);
-            color: var(--text-paper);
-            padding: 1.25rem 1.5rem;
-            border-radius: 0.75rem;
-            border: 2px solid var(--color-amber);
-            box-shadow: 0 8px 30px rgba(0,0,0,0.7);
-            max-width: 360px;
-            width: 90vw;
-            max-height: 92vh;
-            overflow-y: auto;
-        }
-        .overlay-title {
-            font-size: 1.2rem;
-            font-weight: 700;
-            color: var(--color-amber);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 0.75rem;
-        }
-        .room-badge-large {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            background-color: var(--bg-panel2);
-            border: 1px solid var(--color-teal);
-            color: var(--color-teal);
-            padding: 0.35rem 0.75rem;
-            border-radius: 0.5rem;
-            font-family: monospace;
-            font-size: 1.05rem;
-            font-weight: 700;
-            letter-spacing: 0.05em;
-            margin-bottom: 0.75rem;
-            width: 100%;
-            justify-content: space-between;
-        }
-        .runners-list-box {
-            max-height: 120px;
-            overflow-y: auto;
-            background-color: var(--bg-asphalt);
-            border: 1px solid var(--border-line);
-            border-radius: 0.4rem;
-            padding: 0.4rem 0.6rem;
-            margin-top: 0.6rem;
-            font-family: monospace;
-            font-size: 0.8rem;
-        }
-        .runner-item {
-            display: flex;
-            justify-content: space-between;
-            padding: 0.3rem 0;
-            border-bottom: 1px dashed var(--border-line);
-        }
-        .runner-item:last-child { border-bottom: none; }
-
-        #btnStartRaceDashboard {
-            margin-top: 0.85rem;
-            font-size: 0.95rem;
-            padding: 0.75rem;
-            font-weight: 700;
-        }
-        #btnStartRaceDashboard:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-        /* La consola reutiliza .log-box / .log-entry de styles.css (mismas
-           clases que ya usa runner.html en "Registro de Sensor"), así que
-           no se define aquí ningún estilo nuevo para las líneas de evento. */
-        .console-section-title {
-            font-size: 0.8rem;
-            font-weight: 600;
-            color: var(--text-paper);
-            margin-top: 1rem;
-            margin-bottom: 0.4rem;
-        }
-
-        .leaflet-marker-icon {
-            transition: transform 0.3s linear !important;
-        }
-        .car-marker, .car-marker-alert {
-            background: transparent !important;
-            border: none !important;
-            border-radius: 0 !important;
-            box-shadow: none !important;
-            animation: none !important;
-        }
-
-        /* ===================== Tabla de posiciones (arriba a la derecha) ===================== */
-        .leaderboard {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            z-index: 1000;
-            width: 310px;
-            max-width: calc(100vw - 40px);
-            max-height: 62vh;
-            display: flex;
-            flex-direction: column;
-            background-color: rgba(28, 32, 36, 0.94);
-            backdrop-filter: blur(8px);
-            color: var(--text-paper);
-            border: 2px solid #FFD700;
-            border-radius: 0.75rem;
-            box-shadow: 0 8px 30px rgba(0,0,0,0.7);
-            font-family: monospace;
-            overflow: hidden;
-        }
-        .lb-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 0.5rem;
-            padding: 0.7rem 0.9rem;
-            cursor: pointer;
-            user-select: none;
-            font-weight: 700;
-            color: #FFD700;
-            font-size: 1rem;
-            background: transparent;
-            border: none;
-            width: 100%;
-            font-family: inherit;
-            text-align: left;
-        }
-        .lb-header .lb-chevron { transition: transform 0.2s; color: var(--text-muted); font-size: 0.8rem; }
-        .leaderboard.collapsed .lb-chevron { transform: rotate(-90deg); }
-        .leaderboard.collapsed .lb-body,
-        .leaderboard.collapsed .lb-footer { display: none; }
-        .lb-body {
-            overflow-y: auto;
-            padding: 0 0.6rem 0.3rem;
-        }
-        .lb-row {
-            display: grid;
-            grid-template-columns: 2rem 1fr auto;
-            align-items: center;
-            gap: 0.4rem;
-            padding: 0.45rem 0.35rem;
-            border-bottom: 1px dashed var(--border-line);
-            border-radius: 0.4rem;
-            cursor: pointer;
-            transition: background-color 0.2s;
-        }
-        .lb-row:last-child { border-bottom: none; }
-        .lb-row:hover { background-color: rgba(255, 255, 255, 0.07); }
-        .lb-row.lb-leader { background-color: rgba(255, 215, 0, 0.10); }
-        .lb-row.lb-offline { opacity: 0.55; }
-        .lb-row.lb-suspicious { background-color: rgba(220, 38, 38, 0.18); }
-        .lb-pos {
-            font-size: 1.05rem;
-            font-weight: 700;
-            text-align: center;
-            color: var(--text-muted);
-        }
-        .lb-runner {
-            display: flex;
-            align-items: center;
-            min-width: 0;
-            gap: 0.4rem;
-            font-size: 0.85rem;
-        }
-        .lb-runner img { width: 26px; height: 26px; object-fit: contain; flex: none; }
-        .lb-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .lb-trend-up { color: var(--color-teal); font-size: 0.7rem; flex: none; }
-        .lb-trend-down { color: var(--color-alert); font-size: 0.7rem; flex: none; }
-        .lb-dist { text-align: right; font-size: 0.82rem; font-weight: 700; color: var(--color-teal); line-height: 1.15; }
-        .lb-dist small { display: block; font-weight: 400; font-size: 0.68rem; color: var(--text-muted); }
-        .lb-dist.lb-finish { color: #FFD700; }
-        .lb-empty { color: var(--text-muted); text-align: center; padding: 0.9rem 0; font-size: 0.8rem; }
-        .lb-footer {
-            padding: 0.4rem 0.9rem 0.6rem;
-            font-size: 0.68rem;
-            color: var(--text-muted);
-            border-top: 1px solid var(--border-line);
-        }
-        @media (max-width: 760px) {
-            .leaderboard { top: 8px; right: 8px; width: 240px; max-height: 45vh; }
-        }
-        @keyframes pulse {
-            0% { transform: scale(1); }
-            50% { transform: scale(1.3); }
-            100% { transform: scale(1); }
-        }
-    </style>
+    <link rel="preload" href="fonts/pixelify-sans-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="fonts/vt323-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="css/game.css?v=6">
 </head>
-<body style="height: 100vh; overflow: hidden; margin: 0;">
+<body class="g-dash">
 
 <div class="dashboard-overlay">
-    <div class="overlay-title">
-        <span>🏁 ECIRace Central</span>
-        <span class="hud-badge" id="hostStatusBadge" style="font-size: 0.7rem;">CONECTANDO</span>
-    </div>
+    <a href="index.html" class="g-logo g-logo--small" title="Pantalla de inicio">
+        <span class="g-logo__main">ECIRACE <span class="g-flag"></span></span>
+        <span class="g-logo__sub">GO!</span>
+    </a>
 
-    <div class="room-badge-large">
-        <span>SALA: <span id="roomCodeDisplay">CAMPUS-ECI</span></span>
-        <button type="button" class="btn btn-secondary" id="btnCopyRoom" style="width: auto; padding: 0.2rem 0.5rem; font-size: 0.75rem;" title="Copiar Código de Sala">
-            📋 Copiar
-        </button>
-    </div>
-
-    <div class="telemetry-row">
-        <span class="telemetry-label">Estado de Red:</span>
-        <span class="telemetry-value" id="status" style="color: var(--color-alert); font-weight: bold;">Desconectado</span>
-    </div>
-    <div class="telemetry-row">
-        <span class="telemetry-label">Estado de la Carrera:</span>
-        <span class="telemetry-value" id="raceStatusValue" style="color: var(--color-amber); font-weight: bold;">--</span>
-    </div>
-    <div class="telemetry-row">
-        <span class="telemetry-label">Pilotos en Sala:</span>
-        <span class="telemetry-value" id="activeCount" style="color: var(--color-teal); font-weight: bold;">0 / 6</span>
-    </div>
-
-    <div class="runners-list-box" id="runnersList">
-        <div style="color: var(--text-muted); text-align: center; padding: 0.5rem 0;">
-            Esperando corredores en la sala...
+    <section class="g-panel" style="display:flex; flex-direction:column; gap:10px;">
+        <div class="g-panel__head" style="margin:0;">
+            <span class="g-ico g-ico--lg" data-icon="map"></span>
+            <h1 class="g-panel__title">Centro de control</h1>
+            <span class="g-pill g-pill--blue" id="hostStatusBadge">CONECTANDO</span>
         </div>
-    </div>
 
-    <button type="button" class="btn btn-primary" id="btnStartRaceDashboard" style="display:none;">
-        🚀 Iniciar Carrera
-    </button>
+        <div class="g-roomcode">
+            <span>SALA <span id="roomCodeDisplay">CAMPUS-ECI</span></span>
+            <button type="button" class="g-btn g-btn--gold" id="btnCopyRoom" title="Copiar código de sala">Copiar</button>
+        </div>
 
-    <div style="margin-bottom: 0.75rem;">
-        <button type="button" class="btn btn-secondary" id="btnToggleMetaMode" style="width: 100%; font-size: 0.85rem; border-style: dashed;">
-            🎯 Personalizar Posición de Meta: <span id="metaModeStatus" style="color: var(--color-alert);">DESACTIVADO</span>
+        <div>
+            <div class="g-kv"><span>Red</span><span id="status" style="color: var(--red);">Desconectado</span></div>
+            <div class="g-kv"><span>Carrera</span><span id="raceStatusValue" style="color: var(--gold);">--</span></div>
+            <div class="g-kv"><span>Pilotos en sala</span><span id="activeCount" style="color: var(--teal);">0 / 6</span></div>
+        </div>
+
+        <div class="runners-list-box" id="runnersList">
+            <div style="color: var(--text-dim); text-align: center; padding: 6px 0;">Esperando pilotos en la sala...</div>
+        </div>
+
+        <button type="button" class="g-race-btn g-race-btn--start" id="btnStartRaceDashboard" style="display:none; min-height:66px; font-size: clamp(1.2rem, 5vw, 1.6rem);">
+            <span class="g-ico" data-icon="flag"></span>
+            <span class="g-btn-label">INICIAR CARRERA</span>
         </button>
-    </div>
 
-    <!-- ===================== Consola de Sockets (misma estructura que "Registro de Sensor" de runner.html) ===================== -->
-    <div class="console-section-title">🖥️ Consola de Sockets</div>
-    <div class="log-box" id="eventLog">
-        <div class="log-entry info">[SISTEMA] Esperando actividad en la sala...</div>
-    </div>
-
-    <div style="display: flex; gap: 0.5rem; margin-top: 0.85rem;">
-        <a href="index.html" class="btn btn-secondary" style="font-size: 0.75rem; padding: 0.4rem; text-decoration: none;">
-            ◀ Portal
-        </a>
-        <a href="lobby.html" class="btn btn-secondary" style="font-size: 0.75rem; padding: 0.4rem; text-decoration: none;">
-            🏠 Lobby
-        </a>
-        <button type="button" class="btn btn-primary" id="btnShareLink" style="font-size: 0.75rem; padding: 0.4rem;">
-            🔗 Enlace
+        <button type="button" class="g-btn g-btn--block g-meta-btn" id="btnToggleMetaMode">
+            <span class="g-ico" data-icon="target"></span>
+            <span>Mover la meta: <span id="metaModeStatus">DESACTIVADO</span></span>
         </button>
-    </div>
+
+        <details class="g-details">
+            <summary>Consola de sockets</summary>
+            <div class="log-box" id="eventLog">
+                <div class="log-entry info">[SISTEMA] Esperando actividad en la sala...</div>
+            </div>
+        </details>
+
+        <div class="g-quick">
+            <a href="index.html" class="g-btn" title="Pantalla de inicio">
+                <span class="g-ico" data-icon="home" style="width:20px;height:20px;"></span>Inicio
+            </a>
+            <a href="lobby.html" class="g-btn" title="Garaje del piloto">
+                <span class="g-ico" data-icon="helmet" style="width:22px;height:20px;"></span>Garaje
+            </a>
+            <button type="button" class="g-btn g-btn--gold" id="btnShareLink" title="Copiar enlace de invitación">
+                <span class="g-ico" data-icon="users" style="width:20px;height:20px;"></span>Invitar
+            </button>
+        </div>
+    </section>
 </div>
 
-<!-- ===================== Tabla de posiciones: ordena a los pilotos por cercanía a la meta ===================== -->
-<div class="leaderboard" id="leaderboard">
+<!-- Tabla de posiciones: ordena a los pilotos por cercanía a la meta -->
+<section class="leaderboard g-panel" id="leaderboard">
     <button type="button" class="lb-header" id="lbToggle" aria-expanded="true" aria-controls="lbBody">
-        <span>🏆 Posiciones</span>
+        <span><span class="g-ico" data-icon="trophy" style="width:22px;height:22px;vertical-align:-3px;"></span> Posiciones</span>
         <span class="lb-chevron">▼</span>
     </button>
     <div class="lb-body" id="lbBody" aria-live="polite">
-        <div class="lb-empty">Esperando corredores...</div>
+        <div class="lb-empty">Esperando pilotos...</div>
     </div>
     <div class="lb-footer" id="lbFooter">Ordenado por distancia a la meta</div>
-</div>
+</section>
 
 <div id="map"></div>
-<script src="js/dashboard.js?v=9"></script>
+
+<script src="js/game-ui.js?v=4"></script>
+<script src="js/dashboard.js?v=12"></script>
 </body>
 </html>
