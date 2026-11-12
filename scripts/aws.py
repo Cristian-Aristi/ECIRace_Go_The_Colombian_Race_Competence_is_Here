@@ -15,7 +15,7 @@ Comandos:
   k6        carga|estres|pico|duracion  pruebas de proyecto.js contra la URL publica
   destroy   elimina toda la infraestructura (incluida la base de datos)
 """
-import argparse, base64, datetime, gzip, json, os, pathlib, secrets, shutil, string, subprocess, sys, time
+import argparse, base64, datetime, gzip, json, os, pathlib, secrets, shutil, socket, string, subprocess, sys, time
 import urllib.error, urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -156,6 +156,25 @@ def default_network(cfg, instance_type):
     return vpc, usable[0]['SubnetId'], usable[0]['AvailabilityZone']
 
 
+def check_dns(cfg, domain):
+    """El dominio propio debe apuntar a la IP elastica antes de desplegar: Let's Encrypt lo valida."""
+    s = stack(cfg)
+    ip = next((o['OutputValue'] for o in (s or {}).get('Outputs', []) if o['OutputKey'] == 'PublicIp'), None)
+    if not ip:
+        print(f'AVISO: aun no hay IP elastica; despues del primer deploy cree el registro A de {domain} '
+              'y vuelva a ejecutar deploy --domain.')
+        return
+    try:
+        resolved = socket.gethostbyname(domain)
+    except OSError:
+        resolved = None
+    if resolved != ip:
+        raise SystemExit(f'{domain} apunta a {resolved or "nada"} y deberia apuntar a {ip}.\n'
+                         f'Cree o corrija el registro A en su proveedor de DNS (en DuckDNS: campo "current ip" = {ip}), '
+                         'espere un par de minutos y repita el deploy.')
+    print(f'DNS correcto: {domain} -> {ip}')
+
+
 def ssm_run(cfg, commands, timeout=600):
     """Ejecuta comandos en la instancia con SSM Run Command y devuelve la salida."""
     instance = outputs(cfg)['InstanceId']
@@ -192,6 +211,10 @@ def cmd_deploy(a, cfg):
         cfg['image'] = a.image
     if a.instance_type:
         cfg['instance_type'] = a.instance_type
+    if a.domain is not None:  # --domain "" vuelve a usar solo la URL de sslip.io
+        cfg['domain'] = a.domain.strip().lower()
+    if cfg.get('domain'):
+        check_dns(cfg, cfg['domain'])
     cfg.setdefault('image', 'ghcr.io/cristian-aristi/ecirace-go:latest')
     cfg.setdefault('instance_type', 't3.small')
     cfg.setdefault('metrics_password', new_metrics_password())
@@ -213,7 +236,8 @@ def cmd_deploy(a, cfg):
               f'MetricsPassword={cfg["metrics_password"]}',
               f'ComposeFile={packed("docker-compose.yml")}', f'Caddyfile={packed("Caddyfile")}',
               f'BootstrapScript={packed("bootstrap.sh")}', f'SshCidr={a.ssh_cidr or ""}',
-              f'KeyName={a.key_name or ""}', f'InstanceProfileName={a.instance_profile}']
+              f'KeyName={a.key_name or ""}', f'InstanceProfileName={a.instance_profile}',
+              f'CustomDomain={cfg.get("domain", "")}']
     print('Desplegando deploy/aws/cloudformation.yaml (3-5 min la primera vez)...')
     ok = aws(cfg, 'cloudformation', 'deploy', '--stack-name', cfg['stack'],
              '--template-file', str(DEPLOY / 'cloudformation.yaml'), '--no-fail-on-empty-changeset',
@@ -225,6 +249,8 @@ def cmd_deploy(a, cfg):
     cfg.update(url=out['Url'], instance=out['InstanceId'])
     save_cfg(cfg)
     print(f'\nURL: {out["Url"]}')
+    if out.get('SslipUrl') and out['SslipUrl'] != out['Url']:
+        print(f'Respaldo: {out["SslipUrl"]}')
     if instance_state(cfg, out['InstanceId']) == 'running':
         wait_healthy(out['Url'])
     print('Al terminar de trabajar: python scripts/aws.py down')
@@ -266,6 +292,8 @@ def cmd_status(a, cfg):
     print(f'Stack     : {cfg["stack"]} -> {s["StackStatus"]}')
     print(f'Instancia : {out["InstanceId"]} ({cfg.get("instance_type", "?")}) -> {state}')
     print(f'URL       : {out["Url"]}')
+    if out.get('SslipUrl') and out['SslipUrl'] != out['Url']:
+        print(f'Respaldo  : {out["SslipUrl"]}')
     print(f'Salud     : {health}')
     print('Creditos  : pantalla del Learner Lab (Budget). Recuerde: down al terminar.')
 
@@ -352,6 +380,7 @@ def main():
     d.add_argument('--ssh-cidr', help='abrir SSH solo para este rango, p. ej. 190.0.0.1/32')
     d.add_argument('--key-name', help='par de llaves para SSH (en Learner Lab: vockey)')
     d.add_argument('--instance-profile', default='LabInstanceProfile', help='perfil IAM existente ("" = ninguno)')
+    d.add_argument('--domain', help='dominio propio con registro A hacia la IP elastica ("" = solo sslip.io)')
     for name in ('check', 'up', 'down', 'status', 'release', 'destroy'):
         sub.add_parser(name)
     lg = sub.add_parser('logs')

@@ -45,13 +45,21 @@ imds() {
     -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
   curl -fsS -H "X-aws-ec2-metadata-token: $token" "http://169.254.169.254/latest/meta-data/$1"
 }
+# shellcheck disable=SC1091
+source deploy.env   # APP_IMAGE, METRICS_PASSWORD y CUSTOM_DOMAIN, escritos por el UserData
 PUBLIC_IP=$(imds public-ipv4)
-DOMAIN="${PUBLIC_IP//./-}.sslip.io"
-echo "Dominio: https://$DOMAIN"
+SSLIP_DOMAIN="${PUBLIC_IP//./-}.sslip.io"
+# Caddy atiende (y certifica) el dominio propio, si existe, y siempre el de sslip.io como respaldo
+if [ -n "${CUSTOM_DOMAIN:-}" ]; then
+  DOMAIN="$CUSTOM_DOMAIN $SSLIP_DOMAIN"
+  MAIN_DOMAIN="$CUSTOM_DOMAIN"
+else
+  DOMAIN="$SSLIP_DOMAIN"
+  MAIN_DOMAIN="$SSLIP_DOMAIN"
+fi
+echo "Dominios: $DOMAIN"
 
 # --- 4. Usuario de métricas (contraseña en bcrypt, nunca en texto plano en Caddy) -----
-# shellcheck disable=SC1091
-source deploy.env   # APP_IMAGE y METRICS_PASSWORD, escritos por el UserData
 HASH=$(docker run --rm "$CADDY_IMAGE" caddy hash-password --plaintext "$METRICS_PASSWORD")
 printf 'basic_auth {\n\tmetrics %s\n}\n' "$HASH" > metrics_auth.caddy
 
@@ -59,11 +67,11 @@ printf 'basic_auth {\n\tmetrics %s\n}\n' "$HASH" > metrics_auth.caddy
 {
   echo "APP_IMAGE=$APP_IMAGE"
   cat data/secrets.env
-  echo "DOMAIN=$DOMAIN"
+  echo "DOMAIN=\"$DOMAIN\""
 } > .env
 
 # --- 6. Levantar (siempre con la última imagen) -----------------------------------------
 docker compose pull --quiet
 docker compose up -d --remove-orphans
 docker image prune -f >/dev/null
-echo "=== listo: https://$DOMAIN ==="
+echo "=== listo: https://$MAIN_DOMAIN ==="

@@ -54,6 +54,11 @@ Parameters:
   BootstrapScript:
     Type: String
     Description: deploy/aws/bootstrap.sh en gzip+base64.
+  CustomDomain:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,}$"
+    Description: "Opcional: dominio propio (p. ej. ecirace-go.duckdns.org) con un registro A hacia la IP elastica. La URL sslip.io sigue activa como respaldo."
   SshCidr:
     Type: String
     Default: ""
@@ -68,6 +73,7 @@ Conditions:
   AllowSsh: !Not [!Equals [!Ref SshCidr, ""]]
   HasKey: !Not [!Equals [!Ref KeyName, ""]]
   HasProfile: !Not [!Equals [!Ref InstanceProfileName, ""]]
+  HasCustomDomain: !Not [!Equals [!Ref CustomDomain, ""]]
 
 Resources:
   SecurityGroup:
@@ -173,13 +179,21 @@ Resources:
           echo '${ComposeFile}' | base64 -d | gunzip > docker-compose.yml
           echo '${Caddyfile}' | base64 -d | gunzip > Caddyfile
           echo '${BootstrapScript}' | base64 -d | gunzip > bootstrap.sh
-          printf 'APP_IMAGE=%s\nMETRICS_PASSWORD=%s\n' '${AppImage}' '${MetricsPassword}' > deploy.env
+          printf 'APP_IMAGE=%s\nMETRICS_PASSWORD=%s\nCUSTOM_DOMAIN=%s\n' '${AppImage}' '${MetricsPassword}' '${CustomDomain}' > deploy.env
           bash bootstrap.sh
           --==ECIRACE==--
 
 Outputs:
   Url:
     Description: URL pública del juego (HTTPS)
+    Value: !If
+      - HasCustomDomain
+      - !Sub "https://${CustomDomain}"
+      - !Sub
+        - "https://${Dashed}.sslip.io"
+        - Dashed: !Join ["-", !Split [".", !Ref ElasticIp]]
+  SslipUrl:
+    Description: URL de respaldo, siempre activa
     Value: !Sub
       - "https://${Dashed}.sslip.io"
       - Dashed: !Join ["-", !Split [".", !Ref ElasticIp]]

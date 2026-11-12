@@ -358,6 +358,16 @@ python scripts/aws.py check       # verifica credenciales y región (us-east-1)
 python scripts/aws.py deploy      # crea o actualiza todo e imprime la URL https://<ip>.sslip.io
 ```
 
+### Dominio propio (opcional)
+
+Por defecto la URL es `https://<ip>.sslip.io`. Para usar un nombre propio, por ejemplo un subdominio gratuito de [DuckDNS](https://www.duckdns.org):
+
+1. Crea el subdominio y apúntalo a la IP elástica. La ves con `python scripts/aws.py status` o en la salida del `deploy`.
+2. Ejecuta `python scripts/aws.py deploy --domain ecirace-go.duckdns.org`.
+   - El script verifica que el DNS apunte a la instancia y reinicia la máquina una vez (los datos se conservan).
+   - Caddy obtiene el certificado del dominio nuevo. La URL de `sslip.io` sigue activa como respaldo.
+   - Para volver a usar solo `sslip.io`: `deploy --domain ""`.
+
 ### Operación diaria
 
 ```bash
