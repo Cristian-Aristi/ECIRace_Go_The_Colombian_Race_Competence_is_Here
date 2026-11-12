@@ -66,7 +66,12 @@ def aws(cfg, *args, check=True, quiet=False):
             raise SystemExit(f'Fallo aws {" ".join(args[:2])}:\n{err}')
         return None
     out = r.stdout.strip()
-    return json.loads(out) if out else None
+    if not out:
+        return {}  # exito sin salida (p. ej. los comandos "wait")
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError:
+        return {'text': out}  # "cloudformation deploy" responde con texto, no JSON
 
 
 def need_credentials(cfg):
@@ -213,7 +218,7 @@ def cmd_deploy(a, cfg):
     ok = aws(cfg, 'cloudformation', 'deploy', '--stack-name', cfg['stack'],
              '--template-file', str(DEPLOY / 'cloudformation.yaml'), '--no-fail-on-empty-changeset',
              '--parameter-overrides', *params, '--tags', *TAGS, check=False)
-    if ok is None and not stack_ok(cfg):
+    if ok is None or not stack_ok(cfg):
         print_failures(cfg)
         raise SystemExit('El despliegue fallo. Corrija la causa de arriba y vuelva a ejecutar deploy.')
     out = outputs(cfg)
