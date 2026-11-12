@@ -76,7 +76,7 @@ Resources:
       GroupDescription: ECIRace GO - HTTP/HTTPS publico; SSH solo si se configura
       VpcId: !Ref VpcId
       SecurityGroupIngress:
-        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0, Description: "Let's Encrypt y redireccion a HTTPS" }
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0, Description: Lets Encrypt (HTTP-01) y redireccion a HTTPS }
         - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: HTTPS y WebSockets }
         - { IpProtocol: udp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: HTTP/3 }
       Tags:
