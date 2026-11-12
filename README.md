@@ -351,15 +351,30 @@ flowchart LR
 
 El CD (`.github/workflows/cd.yml`) solo publica la imagen. Learner Lab entrega **credenciales temporales**, así que el despliegue se hace desde el equipo con `scripts/aws.py`.
 
-### Paso a paso
+### Primer despliegue, paso a paso
+
+**Antes de empezar** (una sola vez):
+- Instala [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html). En Windows: `winget install -e --id Amazon.AWSCLI`. Después reinicia la terminal o VS Code.
+- La imagen del servidor en GHCR debe ser **pública**: en GitHub, abre *Packages → ecirace-go → Package settings → Change visibility*. Si es privada, la instancia no puede descargarla y arranca sin contenedores.
+
+**Despliegue:**
 
 1. **Iniciar el laboratorio.** En AWS Academy, entra a **Learner Lab → Start Lab** y espera a que el indicador se ponga en verde.
-2. **Configurar credenciales** (en cada sesión). Ve a **AWS Details → AWS CLI → Show** y copia el bloque en `~/.aws/credentials` (en Windows: `%UserProfile%\.aws\credentials`). Necesitas [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html).
-3. **Desplegar** (la primera vez tarda ~5 min):
+2. **Configurar credenciales.** Cambian en cada sesión. Ve a **AWS Details → AWS CLI → Show**, copia el bloque completo (`[default]`, `aws_access_key_id`, `aws_secret_access_key`, `aws_session_token`) y pégalo en el archivo de credenciales:
+
+   ```powershell
+   notepad "$env:USERPROFILE\.aws\credentials"     # Windows: borrar todo, pegar, guardar
+   ```
+   ```bash
+   nano ~/.aws/credentials                           # Linux / macOS
+   ```
+   > ⚠️ El bloque va **en el archivo**, nunca pegado directamente en la terminal.
+
+3. **Verificar y desplegar** (la primera vez tarda ~5 min):
 
 ```bash
-python scripts/aws.py check       # verifica credenciales y región (us-east-1)
-python scripts/aws.py deploy      # crea o actualiza todo e imprime la URL https://<ip>.sslip.io
+python scripts/aws.py check       # debe mostrar la cuenta y la región us-east-1
+python scripts/aws.py deploy      # crea todo, imprime la URL y espera "Servidor UP"
 ```
 
 ### Dominio propio (opcional)
@@ -379,11 +394,23 @@ python scripts/aws.py up          # antes de clase o demo: enciende y descarga l
 python scripts/aws.py down        # al terminar: sin costo de cómputo (URL y datos se conservan)
 python scripts/aws.py status      # estado de la instancia, URL y salud
 python scripts/aws.py release     # aplica la última imagen publicada sin apagar (SSM)
-python scripts/aws.py logs app    # últimas líneas de app | caddy | postgres
+python scripts/aws.py logs app    # últimas líneas de app | caddy | postgres | bootstrap
 python scripts/aws.py monitor up  # Grafana local con las métricas de AWS
 python scripts/aws.py k6 carga    # pruebas de carga contra la URL pública
 python scripts/aws.py destroy     # elimina toda la infraestructura
 ```
+
+En cada sesión nueva: **Start Lab → actualizar credenciales → `up`**. Al terminar: **`down`**. La IP elástica no cambia, así que el dominio sigue apuntando a la instancia sin tocar DuckDNS. `destroy` es solo para el final del semestre, porque borra la base de datos y libera la IP.
+
+### Problemas comunes
+
+| Síntoma | Causa y solución |
+|---|---|
+| `Las credenciales de AWS caducaron o no existen` | La sesión del lab terminó o el archivo quedó mal. Haz **Start Lab** y vuelve a pegar el bloque de *AWS Details* en el archivo de credenciales. |
+| `deploy` falla y muestra *Recursos que fallaron* | El script imprime el motivo que da CloudFormation. Corrige la causa y vuelve a ejecutar `deploy`: si el stack quedó en `ROLLBACK_COMPLETE`, el script lo elimina solo. |
+| `El servidor no respondió a tiempo` y `logs` no muestra contenedores | El arranque de la instancia se detuvo. Revísalo con `python scripts/aws.py logs bootstrap`. La causa más común es que la imagen de GHCR sea privada. Después de corregir, ejecuta `python scripts/aws.py release`. |
+| `deploy --domain` dice que el dominio no apunta a la IP | Actualiza en DuckDNS el campo *current ip* con la IP que muestra el mensaje, espera 1-2 minutos y repite. |
+| `SSM no está disponible` | `release` y `logs` usan SSM. Como alternativa, `down` + `up` aplica la última imagen al encender. |
 
 > 💡 Usa `up` antes de una demo y **siempre `down` al terminar**. Learner Lab también detiene la instancia al cerrar la sesión, pero lo que quede encendido consume créditos del laboratorio.
 >
