@@ -10,7 +10,7 @@ Comandos:
   down      detiene la instancia: no se cobra computo, solo el disco y la IP elastica
   status    estado de la instancia, URL y salud del servidor
   release   vuelve a descargar la imagen y reinicia los contenedores (via SSM)
-  logs      ultimas lineas de los contenedores (via SSM)
+  logs      ultimas lineas de los contenedores, o del arranque con: logs bootstrap (via SSM)
   monitor   up|down  Prometheus + Grafana locales leyendo las metricas de la instancia
   k6        carga|estres|pico|duracion  pruebas de proyecto.js contra la URL publica
   destroy   elimina toda la infraestructura (incluida la base de datos)
@@ -279,9 +279,12 @@ def cmd_release(a, cfg):
 
 def cmd_logs(a, cfg):
     need_credentials(cfg)
-    service = a.service or ''
-    print(ssm_run(cfg, [f'cd /opt/ecirace && docker compose ps && docker compose logs --no-color --tail {a.tail} {service}'],
-                  timeout=120))
+    if a.service == 'bootstrap':  # arranque de la instancia: Docker, imagenes, certificado
+        cmd = (f'tail -n {a.tail} /var/log/ecirace-bootstrap.log 2>/dev/null || echo "(sin log de bootstrap)"; '
+               'echo "--- cloud-init ---"; grep -iE "error|fail|scripts-user" /var/log/cloud-init-output.log | tail -n 30')
+    else:
+        cmd = f'cd /opt/ecirace && docker compose ps -a && docker compose logs --no-color --tail {a.tail} {a.service or ""}'
+    print(ssm_run(cfg, [cmd], timeout=120))
 
 
 def cmd_monitor(a, cfg):
@@ -352,7 +355,7 @@ def main():
     for name in ('check', 'up', 'down', 'status', 'release', 'destroy'):
         sub.add_parser(name)
     lg = sub.add_parser('logs')
-    lg.add_argument('service', nargs='?', choices=['app', 'caddy', 'postgres'])
+    lg.add_argument('service', nargs='?', choices=['app', 'caddy', 'postgres', 'bootstrap'])
     lg.add_argument('--tail', type=int, default=100)
     m = sub.add_parser('monitor')
     m.add_argument('mode', choices=['up', 'down'])
