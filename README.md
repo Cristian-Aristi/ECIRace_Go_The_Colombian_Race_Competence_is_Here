@@ -16,6 +16,10 @@
 
 Proyecto del curso **Arquitecturas de Software (ARSW)** · Escuela Colombiana de Ingeniería Julio Garavito · 2026-2
 
+### 🌐 [ecirace-go.duckdns.org](https://ecirace-go.duckdns.org)
+
+<sub>Desplegado en AWS. Para ahorrar créditos, el servidor solo está encendido durante clases, demos y pruebas.</sub>
+
 </div>
 
 ---
@@ -323,11 +327,11 @@ python scripts/lab.py fault               # simula una falla de 30 s (modo labor
 
 > **¿Por qué AWS y no Azure?** El Sprint 8 se diseñó primero sobre Azure Container Apps. No pudimos usarlo porque la cuenta de la Escuela no tenía créditos de Azure (Azure for Students no se podía renovar) y la universidad nos asignó **AWS Academy Learner Lab**. El diseño de Azure quedó en el historial de commits. Como el código solo depende del perfil `cloud`, el cambio de nube no tocó la aplicación.
 
-La aplicación corre en **una instancia EC2** con Docker Compose. Toda la infraestructura está descrita como código en [`deploy/aws/cloudformation.yaml`](deploy/aws/cloudformation.yaml).
+La aplicación está publicada en **https://ecirace-go.duckdns.org** y corre en **una instancia EC2** con Docker Compose. Toda la infraestructura está descrita como código en [`deploy/aws/cloudformation.yaml`](deploy/aws/cloudformation.yaml).
 
 ```mermaid
 flowchart LR
-    U["📱 Celulares / 💻 Tablero"] -- "HTTPS + WSS<br/>&lt;ip&gt;.sslip.io" --> C
+    U["📱 Celulares / 💻 Tablero"] -- "HTTPS + WSS<br/>ecirace-go.duckdns.org" --> C
     subgraph EC2["EC2 t3.small · Amazon Linux 2023 · IP elástica"]
         C["Caddy<br/>TLS Let's Encrypt"] --> A["ECIRace GO<br/>perfil cloud"]
         A --> PG[("PostgreSQL 16<br/>red interna")]
@@ -338,7 +342,7 @@ flowchart LR
 | Decisión | Motivo |
 |---|---|
 | **EC2 + Docker Compose** | App Runner no soporta WebSockets. Un balanceador (ALB) necesita dominio propio para el certificado y cobra aunque nadie lo use. |
-| **Caddy + `sslip.io`** | El GPS del celular exige HTTPS. Caddy obtiene el certificado de Let's Encrypt sin comprar dominio. |
+| **Caddy + DuckDNS** | El GPS del celular exige HTTPS. Caddy obtiene solo el certificado de Let's Encrypt para `ecirace-go.duckdns.org`, un subdominio gratuito. `<ip>.sslip.io` queda activo como respaldo. |
 | **IP elástica** | La URL no cambia al encender y apagar, y Caddy no pide un certificado nuevo cada vez. |
 | **Una sola instancia** | Las salas, el game loop y el broker STOMP viven en memoria. |
 | **PostgreSQL en contenedor** | Evita el costo fijo de RDS. Vive en una red interna sin puertos expuestos. Su clave se genera dentro de la instancia y nunca sale de ella. |
