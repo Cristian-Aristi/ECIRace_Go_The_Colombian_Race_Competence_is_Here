@@ -1,0 +1,13 @@
+# Override para observar ECIRace desplegado en la nube con el mismo Prometheus/Grafana del laboratorio.
+# No se usa a mano: python scripts/aws.py monitor up|down  y  python scripts/aws.py k6 <perfil>
+# (el script genera monitoring/prometheus-cloud.yml con la URL pública y el usuario de métricas)
+services:
+  probe:
+    environment:
+      # En la nube el modo laboratorio está apagado: la sonda consulta la readiness de Actuator
+      - PROBE_URL=${ECIRACE_CLOUD_URL:-http://ecirace-server:8080}/actuator/health/readiness
+    depends_on: !reset []
+
+  prometheus:
+    volumes:
+      - ./monitoring/prometheus-cloud.yml:/etc/prometheus/prometheus.yml:ro

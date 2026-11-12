@@ -1,0 +1,205 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  ECIRace GO (ARSW 2026-2, Sprint 8) - Servidor en una EC2 con Docker Compose
+  (Caddy + Spring Boot + PostgreSQL), pensado para AWS Academy Learner Lab.
+  Se despliega con: python scripts/aws.py deploy
+
+# Notas de diseño
+# - Una sola instancia: salas, game loop y broker STOMP viven en memoria (no hay escalado horizontal).
+# - IP elástica asociada a una interfaz de red creada ANTES de la instancia: la URL
+#   (<ip>.sslip.io) no cambia al detener/encender y Caddy no pide un certificado nuevo cada vez.
+# - Sin puerto 22 por defecto: la administración se hace con SSM (LabInstanceProfile).
+# - IMDSv2 obligatorio y disco cifrado.
+# - Los archivos de deploy/aws viajan comprimidos (gzip+base64) como parámetros; cambiarlos
+#   modifica el UserData y CloudFormation solo detiene/enciende la instancia (no la reemplaza),
+#   así que los datos de PostgreSQL se conservan.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC por defecto de la cuenta (scripts/aws.py la detecta).
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subred pública por defecto de una zona con instancias t3.
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Description: Amazon Linux 2023 x86_64. Se fija en el primer despliegue para que una AMI nueva no reemplace la instancia.
+  InstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues: [t3.small, t3.medium, t2.small, t2.medium]
+    Description: 2 GiB alcanzan para la JVM (1 GiB), PostgreSQL y Caddy.
+  InstanceProfileName:
+    Type: String
+    Default: LabInstanceProfile
+    Description: Perfil IAM existente (Learner Lab no permite crear roles). Vacío para no usar ninguno.
+  AppImage:
+    Type: String
+    Default: ghcr.io/cristian-aristi/ecirace-go:latest
+    AllowedPattern: "^[a-z0-9./_:@-]+$"
+    Description: Imagen del servidor (pública en GHCR).
+  MetricsPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 20
+    MaxLength: 64
+    AllowedPattern: "^[A-Za-z0-9]+$"
+    Description: Contraseña del usuario "metrics" para /actuator/prometheus (la genera scripts/aws.py).
+  ComposeFile:
+    Type: String
+    Description: deploy/aws/docker-compose.yml en gzip+base64.
+  Caddyfile:
+    Type: String
+    Description: deploy/aws/Caddyfile en gzip+base64.
+  BootstrapScript:
+    Type: String
+    Description: deploy/aws/bootstrap.sh en gzip+base64.
+  CustomDomain:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,}$"
+    Description: "Opcional: dominio propio (p. ej. ecirace-go.duckdns.org) con un registro A hacia la IP elastica. La URL sslip.io sigue activa como respaldo."
+  SshCidr:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^([0-9]{1,3}\\.){3}[0-9]{1,3}/(3[0-2]|[12]?[0-9])$"
+    Description: "Opcional: rango que puede entrar por SSH (p. ej. 190.0.0.1/32). Vacío = SSH cerrado."
+  KeyName:
+    Type: String
+    Default: ""
+    Description: "Opcional: par de llaves para SSH (en Learner Lab: vockey)."
+
+Conditions:
+  AllowSsh: !Not [!Equals [!Ref SshCidr, ""]]
+  HasKey: !Not [!Equals [!Ref KeyName, ""]]
+  HasProfile: !Not [!Equals [!Ref InstanceProfileName, ""]]
+  HasCustomDomain: !Not [!Equals [!Ref CustomDomain, ""]]
+
+Resources:
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ECIRace GO - HTTP/HTTPS publico; SSH solo si se configura
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0, Description: Lets Encrypt (HTTP-01) y redireccion a HTTPS }
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: HTTPS y WebSockets }
+        - { IpProtocol: udp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: HTTP/3 }
+      Tags:
+        - { Key: Name, Value: ecirace-sg }
+
+  SshIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: AllowSsh
+    Properties:
+      GroupId: !Ref SecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: !Ref SshCidr
+      Description: SSH restringido
+
+  NetworkInterface:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref SubnetId
+      GroupSet: [!Ref SecurityGroup]
+      Tags:
+        - { Key: Name, Value: ecirace-eni }
+
+  ElasticIp:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - { Key: Name, Value: ecirace-eip }
+
+  ElasticIpAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt ElasticIp.AllocationId
+      NetworkInterfaceId: !Ref NetworkInterface
+
+  # Solo fija opciones de seguridad que nunca cambian (cambiar la plantilla de lanzamiento
+  # reemplazaría la instancia).
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        MetadataOptions:
+          HttpTokens: required          # IMDSv2 obligatorio
+          HttpPutResponseHopLimit: 2    # permite consultarlo desde contenedores si hiciera falta
+          HttpEndpoint: enabled
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 20
+              VolumeType: gp3
+              Encrypted: true
+              DeleteOnTermination: true
+
+  Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: ElasticIpAssociation   # arranca ya con la IP elástica: el dominio es estable desde el primer boot
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      IamInstanceProfile: !If [HasProfile, !Ref InstanceProfileName, !Ref AWS::NoValue]
+      KeyName: !If [HasKey, !Ref KeyName, !Ref AWS::NoValue]
+      NetworkInterfaces:
+        - NetworkInterfaceId: !Ref NetworkInterface
+          DeviceIndex: "0"
+      Tags:
+        - { Key: Name, Value: ecirace-server }
+        - { Key: proyecto, Value: ECIRace GO }
+        - { Key: curso, Value: ARSW }
+      # Multipart: la parte cloud-config hace que el script corra en CADA arranque.
+      UserData:
+        Fn::Base64: !Sub |
+          Content-Type: multipart/mixed; boundary="==ECIRACE=="
+          MIME-Version: 1.0
+
+          --==ECIRACE==
+          Content-Type: text/cloud-config; charset="us-ascii"
+
+          cloud_final_modules:
+            - [scripts-user, always]
+
+          --==ECIRACE==
+          Content-Type: text/x-shellscript; charset="us-ascii"
+
+          #!/bin/bash
+          set -euo pipefail
+          install -d -m 700 /opt/ecirace
+          cd /opt/ecirace
+          umask 077
+          echo '${ComposeFile}' | base64 -d | gunzip > docker-compose.yml
+          echo '${Caddyfile}' | base64 -d | gunzip > Caddyfile
+          echo '${BootstrapScript}' | base64 -d | gunzip > bootstrap.sh
+          printf 'APP_IMAGE=%s\nMETRICS_PASSWORD=%s\nCUSTOM_DOMAIN=%s\n' '${AppImage}' '${MetricsPassword}' '${CustomDomain}' > deploy.env
+          bash bootstrap.sh
+          --==ECIRACE==--
+
+Outputs:
+  Url:
+    Description: URL pública del juego (HTTPS)
+    Value: !If
+      - HasCustomDomain
+      - !Sub "https://${CustomDomain}"
+      - !Sub
+        - "https://${Dashed}.sslip.io"
+        - Dashed: !Join ["-", !Split [".", !Ref ElasticIp]]
+  SslipUrl:
+    Description: URL de respaldo, siempre activa
+    Value: !Sub
+      - "https://${Dashed}.sslip.io"
+      - Dashed: !Join ["-", !Split [".", !Ref ElasticIp]]
+  PublicIp:
+    Value: !Ref ElasticIp
+  InstanceId:
+    Value: !Ref Instance
+  SecurityGroupId:
+    Value: !Ref SecurityGroup
