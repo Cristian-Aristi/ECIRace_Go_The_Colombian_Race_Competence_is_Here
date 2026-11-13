@@ -5,13 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="theme-color" content="#2a6fe0">
     <title>ECIRace GO · Inicio</title>
-    <!-- SDK Oficial de Google Identity Services -->
-    <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <script>
-        /* Fondo elegido en Ajustes: se aplica antes de pintar para que no parpadee */
-        try { if (localStorage.getItem('ecirace_bg') !== 'imagen') document.documentElement.classList.add('bg-pista'); }
-        catch (e) { document.documentElement.classList.add('bg-pista'); }
-    </script>
+    <script src="js/theme-boot.js"></script>
     <link rel="preload" href="fonts/pixelify-sans-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="fonts/vt323-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="css/game.css?v=6">
@@ -55,12 +49,12 @@
     <div class="g-col g-col--right">
         <!-- Selección de modo -->
         <div class="g-modes" role="tablist" aria-label="Modo de juego">
-            <button type="button" class="role-tab" id="tabDesktop" role="tab" onclick="switchRole('DESKTOP')">
+            <button type="button" class="role-tab" id="tabDesktop" role="tab" data-role="DESKTOP">
                 <span class="g-ico" data-icon="monitor" style="width:40px;height:34px;"></span>
                 Centro de control
                 <small>Host · Computador</small>
             </button>
-            <button type="button" class="role-tab" id="tabMobile" role="tab" onclick="switchRole('MOBILE')">
+            <button type="button" class="role-tab" id="tabMobile" role="tab" data-role="MOBILE">
                 <span class="g-ico" data-icon="phone" style="width:40px;height:34px;"></span>
                 Piloto en pista
                 <small>Celular con GPS</small>
@@ -90,7 +84,7 @@
 
             <p class="g-foot" style="margin: 16px 0 0; text-shadow:none; color: var(--text-dim);">
                 ¿Vas a correr desde este equipo?
-                <button type="button" class="g-link" onclick="switchRole('MOBILE')">Entrar como piloto</button>
+                <button type="button" class="g-link" data-role="MOBILE">Entrar como piloto</button>
             </p>
         </section>
 
@@ -103,25 +97,11 @@
             </div>
 
             <div class="g-google">
-                <div id="g_id_onload"
-                     data-client_id="882582914104-example.apps.googleusercontent.com"
-                     data-context="signin"
-                     data-ux_mode="popup"
-                     data-callback="handleCredentialResponse"
-                     data-auto_prompt="false">
-                </div>
-                <div class="g_id_signin"
-                     data-type="standard"
-                     data-shape="rectangular"
-                     data-theme="filled_black"
-                     data-text="signin_with"
-                     data-size="large"
-                     data-logo_alignment="left">
-                </div>
-                <button type="button" class="g-link" id="btnSimulateGoogle"
-                        title="Permite probar el flujo de Google sin registrar un Client ID en Google Cloud">
-                    Probar el inicio con Google sin Client ID
-                </button>
+                <!-- El botón lo dibuja Google Identity Services con el client ID que entrega el servidor (/api/auth/config) -->
+                <div id="googleSignInButton"></div>
+                <p class="g-foot" id="googleUnavailable" style="display:none; margin: 6px 0 0; text-shadow:none; color: var(--text-dim);">
+                    El inicio de sesión con Google no está configurado en este servidor. Entra como invitado.
+                </p>
             </div>
 
             <div class="g-divider">o entra como invitado</div>
@@ -130,7 +110,7 @@
             <div class="g-row">
                 <div class="g-field">
                     <span class="g-ico" data-icon="tag"></span>
-                    <input type="text" id="guestInput" placeholder="Ej. Daniel" maxlength="16" autocomplete="off">
+                    <input type="text" id="guestInput" placeholder="Ej. Piloto_ECI" maxlength="16" pattern="[A-Za-z0-9_.\-À-ÿ]{3,16}" autocomplete="off">
                 </div>
             </div>
             <button type="button" class="g-race-btn" id="btnEnterGuest" style="margin-top: 14px; font-size: clamp(1.3rem, 6.5vw, 1.9rem);">
@@ -138,16 +118,9 @@
                 <span class="g-btn-label">ENTRAR ▷</span>
             </button>
 
-            <span class="g-label" style="margin-top: 18px;">PILOTOS DE PRUEBA:</span>
-            <div class="g-quick">
-                <button type="button" class="g-btn" id="btnQuickDaniel">Daniel</button>
-                <button type="button" class="g-btn" id="btnQuickCristian">Cristian</button>
-                <button type="button" class="g-btn" id="btnQuickSantiago">Santiago</button>
-            </div>
-
             <p class="g-foot" style="margin: 16px 0 0; text-shadow:none; color: var(--text-dim);">
                 ¿Quieres proyectar el mapa en este dispositivo?
-                <button type="button" class="g-link" onclick="switchRole('DESKTOP')">Centro de control</button>
+                <button type="button" class="g-link" data-role="DESKTOP">Centro de control</button>
             </p>
         </section>
     </div>
@@ -162,10 +135,12 @@
             <h2 class="g-panel__title" id="gTagTitle">Confirma tu tag</h2>
         </div>
         <p class="g-copy" style="margin:0;">Cuenta de Google verificada. ¿Con qué nombre te verán tus rivales en la pista?</p>
+        <p class="g-copy" style="margin:0; font-size:1rem; color: var(--text-dim);">3 a 16 caracteres: letras, números, punto, guion o guion bajo (sin espacios).</p>
         <div class="g-field">
             <span class="g-ico" data-icon="pencil"></span>
             <input type="text" id="googleTagInput" placeholder="Nombre de piloto" maxlength="16" autocomplete="off">
         </div>
+        <p class="g-copy" id="googleTagError" style="display:none; margin:0; color: var(--color-alert, #ff4b55);"></p>
         <div class="g-two">
             <button type="button" class="g-btn g-btn--gold" id="btnConfirmGoogleTag">Ir al garaje</button>
             <button type="button" class="g-btn" id="btnCancelGoogleTag">Cancelar</button>
@@ -174,6 +149,7 @@
 </div>
 
 <script src="js/game-ui.js?v=4"></script>
+<script src="js/session.js?v=1"></script>
 <script src="js/index.js?v=3"></script>
 </body>
 </html>

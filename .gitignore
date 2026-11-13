@@ -37,3 +37,6 @@ build/
 deploy/aws/.aws-deploy.json
 monitoring/prometheus-cloud.yml
 __pycache__/
+
+### Secretos locales (los genera scripts/lab.py) ###
+.env

@@ -38,13 +38,30 @@ Parameters:
     Default: ghcr.io/cristian-aristi/ecirace-go:latest
     AllowedPattern: "^[a-z0-9./_:@-]+$"
     Description: Imagen del servidor (pública en GHCR).
-  MetricsPassword:
+  MetricsPasswordHash:
     Type: String
     NoEcho: true
-    MinLength: 20
-    MaxLength: 64
-    AllowedPattern: "^[A-Za-z0-9]+$"
-    Description: Contraseña del usuario "metrics" para /actuator/prometheus (la genera scripts/aws.py).
+    MinLength: 40
+    MaxLength: 200
+    AllowedPattern: "^[A-Za-z0-9+/=]+$"
+    Description: >-
+      Hash bcrypt (en base64) de la contraseña del usuario "metrics" para /actuator/prometheus.
+      La contraseña en sí nunca sale del equipo de quien despliega (scripts/aws.py).
+  GoogleClientId:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^[0-9]+-[a-z0-9]+\\.apps\\.googleusercontent\\.com$"
+    Description: "Client ID web de Google Identity Services (no es secreto). Vacío = login con Google desactivado."
+  RateLimitEnabled:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Límite de peticiones por IP. Apagarlo solo durante pruebas de carga con k6.
+  DemoTools:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Muestra el simulador de ruta y "simular victoria" en la pantalla del corredor (solo demos).
   ComposeFile:
     Type: String
     Description: deploy/aws/docker-compose.yml en gzip+base64.
@@ -179,7 +196,7 @@ Resources:
           echo '${ComposeFile}' | base64 -d | gunzip > docker-compose.yml
           echo '${Caddyfile}' | base64 -d | gunzip > Caddyfile
           echo '${BootstrapScript}' | base64 -d | gunzip > bootstrap.sh
-          printf 'APP_IMAGE=%s\nMETRICS_PASSWORD=%s\nCUSTOM_DOMAIN=%s\n' '${AppImage}' '${MetricsPassword}' '${CustomDomain}' > deploy.env
+          printf 'APP_IMAGE=%s\nMETRICS_HASH_B64=%s\nCUSTOM_DOMAIN=%s\nGOOGLE_CLIENT_ID=%s\nRATE_LIMIT_ENABLED=%s\nDEMO_TOOLS=%s\n' '${AppImage}' '${MetricsPasswordHash}' '${CustomDomain}' '${GoogleClientId}' '${RateLimitEnabled}' '${DemoTools}' > deploy.env
           bash bootstrap.sh
           --==ECIRACE==--
 

@@ -11,7 +11,7 @@ const UI = window.GameUI || {
 };
 
 const urlParams = new URLSearchParams(window.location.search);
-const preselectedRoom = urlParams.get('room');
+const preselectedRoom = Session.validRoomCode(urlParams.get('room'));
 
 // 🚀 Helpers blindados contra bloqueos de Safari / Modo Incógnito
 function safeGetStorage(key) {
@@ -24,16 +24,11 @@ function safeRemoveStorage(key) {
     try { localStorage.removeItem(key); } catch (e) {}
 }
 
-const activePilot = urlParams.get('player') || safeGetStorage('ecirace_username');
-if (!activePilot || activePilot.trim() === "") {
-    alert("Acceso denegado: Debes iniciar sesión o ingresar tu nombre de piloto primero.");
-    const redirectTarget = preselectedRoom
-        ? `index.html?room=${encodeURIComponent(preselectedRoom)}`
-        : "index.html";
-    window.location.href = redirectTarget;
-} else {
-    safeSetStorage('ecirace_username', activePilot.trim());
+// La identidad sale SOLO de la sesión emitida por el servidor (ya no se acepta ?player= en la URL)
+if (!Session.requireLogin(preselectedRoom)) {
+    throw new Error('Sin sesión: redirigiendo al inicio');
 }
+const activePilot = Session.username();
 
 const pilotNameDisplay = document.getElementById('pilotNameDisplay');
 const pilotEmailDisplay = document.getElementById('pilotEmailDisplay');
@@ -77,8 +72,10 @@ if (preselectedRoom && roomInput) {
     roomInput.value = preselectedRoom.toUpperCase();
 }
 
-// Expone la función globalmente para el atributo onclick en el HTML
+// Selección de sala (se conecta con addEventListener; el HTML ya no usa onclick)
 window.selectRoom = function(code) {
+    code = Session.validRoomCode(code);
+    if (!code) return;
     roomInput.value = code;
     document.querySelectorAll('.room-pill').forEach(el => {
         el.classList.toggle('active', el.dataset.code === code);
@@ -104,14 +101,9 @@ window.selectVehicle = function(vehicleType) {
 
 async function cargarSalasActivas() {
     try {
-        const res = await fetch('/api/rooms', {
-            headers: {
-                'ngrok-skip-browser-warning': 'true',
-                'Accept': 'application/json'
-            }
-        });
+        const res = await Session.api('/api/rooms');
         if (res.ok) {
-            const rooms = await res.json();
+            const rooms = res.data || [];
             if (rooms && rooms.length > 0) {
                 activeRoomsContainer.innerHTML = '';
                 rooms.forEach(r => {
@@ -128,7 +120,7 @@ async function cargarSalasActivas() {
                         + `<span class="g-bars is-on">${[1, 2, 3, 4].map(n => `<i style="${n > barras ? 'background:rgba(0,0,0,.3)' : ''}"></i>`).join('')}</span>`;
                     pill.title = isStarted ? 'La carrera ya empezó' : (isFull ? 'Sala llena' : 'Toca para elegir esta sala');
                     if (!isFull && !isStarted) {
-                        pill.onclick = () => window.selectRoom(r.roomCode);
+                        pill.addEventListener('click', () => window.selectRoom(r.roomCode));
                     }
                     activeRoomsContainer.appendChild(pill);
                 });
@@ -157,46 +149,29 @@ function marcarConexion(ok) {
     if (chip) chip.title = ok ? 'Conectado al servidor' : 'Sin conexión con el servidor';
 }
 
-async function cargarPerfil(username) {
-    pilotNameDisplay.textContent = username;
+async function cargarPerfil() {
+    pilotNameDisplay.textContent = activePilot;
+    const local = Session.profile();
+    if (local) renderizarPerfil(local);
     try {
-        const res = await fetch(`/api/auth/profile/${encodeURIComponent(username)}`, {
-            headers: {
-                'ngrok-skip-browser-warning': 'true',
-                'Accept': 'application/json'
-            }
-        });
-        if (res.ok) {
-            const profile = await res.json();
-            renderizarPerfil(profile);
-        } else {
-            const initRes = await fetch('/api/auth/guest', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'ngrok-skip-browser-warning': 'true'
-                },
-                body: JSON.stringify({ username: username })
-            });
-            if (initRes.ok) {
-                const profile = await initRes.json();
-                renderizarPerfil(profile);
-            }
+        const res = await Session.api('/api/auth/me');
+        if (res.status === 401) {
+            UI.toast('Tu sesión venció. Vuelve a iniciar sesión.', 'warn');
+            setTimeout(() => Session.requireLogin(preselectedRoom), 1200);
+            return;
+        }
+        if (res.ok && res.data) {
+            Session.updateProfile(res.data);
+            renderizarPerfil(res.data);
         }
     } catch (err) {
-        renderizarPerfil({
-            username: username,
-            email: username.toLowerCase() + "@ecirace.local",
-            racesCount: 0,
-            winsCount: 0,
-            rating: 0.0
-        });
+        marcarConexion(false);
     }
 }
 
 function renderizarPerfil(profile) {
     pilotNameDisplay.textContent = profile.username;
-    pilotEmailDisplay.textContent = profile.email || (profile.username.toLowerCase() + "@ecirace.local");
+    pilotEmailDisplay.textContent = profile.email || 'Piloto invitado';
 
     const races = profile.racesCount || 0;
     const wins = profile.winsCount || 0;
@@ -220,45 +195,30 @@ function renderizarPerfil(profile) {
 
 btnCreateRoom.addEventListener('click', async () => {
     const desiredCode = createRoomInput.value.trim();
-    const pilot = pilotNameDisplay.textContent.trim();
     createRoomError.style.display = 'none';
+    if (desiredCode && !Session.validRoomCode(desiredCode)) {
+        createRoomError.textContent = 'Código inválido: 3 a 20 caracteres (letras, números, guion o guion bajo).';
+        createRoomError.style.display = 'block';
+        return;
+    }
     btnCreateRoom.disabled = true;
     UI.setLabel(btnCreateRoom, "Creando...");
 
     try {
-        const res = await fetch('/api/rooms/create', {
+        const res = await Session.api('/api/rooms/create', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'ngrok-skip-browser-warning': 'true'
-            },
-            body: JSON.stringify({
-                hostName: pilot,
-                preferredCode: desiredCode || null,
-                vehicleType: selectedVehicleMemory
-            })
+            body: { preferredCode: desiredCode || null }
         });
 
-        if (res.status === 201) {
-            const room = await res.json();
-            // El que crea la sala desde el lobby también corre: hay que registrarlo como
-            // corredor, si no el servidor rechaza su telemetría ("runner not registered").
-            try {
-                await fetch(`/api/rooms/${encodeURIComponent(room.roomCode)}/join`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'ngrok-skip-browser-warning': 'true'
-                    },
-                    body: JSON.stringify({ runnerId: pilot, vehicleType: selectedVehicleMemory })
-                });
-            } catch (e) {
-                console.warn('No se pudo registrar al host como corredor:', e);
-            }
+        if (res.status === 201 && res.data && res.data.room) {
+            const room = res.data.room;
+            Session.setHostKey(room.roomCode, res.data.hostKey);
+            // El que crea la sala desde el lobby también corre: se registra como corredor
+            const joined = await Session.api(`/api/rooms/${encodeURIComponent(room.roomCode)}/join`, { method: 'POST' });
+            if (!joined.ok) console.warn('No se pudo registrar al host como corredor:', joined.status);
             enterWaitingRoom(room.roomCode);
         } else {
-            const err = await res.json().catch(() => ({ error: 'No se pudo crear la sala.' }));
-            createRoomError.textContent = err.error || 'Ese código ya está en uso, elige otro.';
+            createRoomError.textContent = (res.data && res.data.error) || 'No se pudo crear la sala.';
             createRoomError.style.display = 'block';
             UI.sfx.error();
         }
@@ -273,29 +233,22 @@ btnCreateRoom.addEventListener('click', async () => {
 });
 
 btnJoinRace.addEventListener('click', async () => {
-    const room = roomInput.value.trim().toUpperCase() || 'CAMPUS-ECI';
-    const pilot = pilotNameDisplay.textContent.trim();
+    const room = Session.validRoomCode(roomInput.value || 'CAMPUS-ECI');
     joinRoomError.style.display = 'none';
+    if (!room) {
+        joinRoomError.textContent = 'Código de sala inválido.';
+        joinRoomError.style.display = 'block';
+        return;
+    }
     btnJoinRace.disabled = true;
 
     try {
-        const res = await fetch(`/api/rooms/${encodeURIComponent(room)}/join`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'ngrok-skip-browser-warning': 'true'
-            },
-            body: JSON.stringify({
-                runnerId: pilot,
-                vehicleType: selectedVehicleMemory
-            })
-        });
+        const res = await Session.api(`/api/rooms/${encodeURIComponent(room)}/join`, { method: 'POST' });
 
         if (res.ok) {
             enterWaitingRoom(room);
         } else {
-            const err = await res.json().catch(() => ({ error: 'No se pudo unir a la sala.' }));
-            joinRoomError.textContent = err.error || `No fue posible unirse a ${room}.`;
+            joinRoomError.textContent = (res.data && res.data.error) || `No fue posible unirse a ${room}.`;
             joinRoomError.style.display = 'block';
             UI.sfx.error();
         }
@@ -324,8 +277,13 @@ function enterWaitingRoom(roomCode) {
     conectarSocketDeSala(roomCode);
 }
 
-function exitWaitingRoom() {
+async function exitWaitingRoom() {
+    const saliendo = activeRoomCode;
     activeRoomCode = null;
+    // Libera el cupo en el servidor (antes el piloto quedaba ocupando la sala)
+    if (saliendo) {
+        Session.api(`/api/rooms/${encodeURIComponent(saliendo)}/leave`, { method: 'POST' }).catch(() => {});
+    }
     waitingRoomSection.style.display = 'none';
     createRoomSection.style.display = 'block';
     if (roomPollInterval) clearInterval(roomPollInterval);
@@ -338,23 +296,17 @@ function exitWaitingRoom() {
 async function refreshRoomState() {
     if (!activeRoomCode || redirecting) return;
     try {
-        const res = await fetch(`/api/rooms/${encodeURIComponent(activeRoomCode)}`, {
-            headers: {
-                'ngrok-skip-browser-warning': 'true',
-                'Accept': 'application/json'
-            }
-        });
+        const res = await Session.api(`/api/rooms/${encodeURIComponent(activeRoomCode)}`, { room: activeRoomCode });
         if (!res.ok) return;
-        const room = await res.json();
-        renderWaitingRoom(room);
+        renderWaitingRoom(res.data);
     } catch (e) {
         console.warn('No se pudo refrescar el estado de la sala:', e);
     }
 }
 
 function renderWaitingRoom(room) {
-    const pilot = pilotNameDisplay.textContent.trim();
-    const soyHost = room.hostName && room.hostName.trim().toLowerCase() === pilot.toLowerCase();
+    const pilot = activePilot;
+    const soyHost = !!room.hostUser && room.hostUser === pilot;
     const count = room.runnersCount || 0;
 
     raceStatusBadge.textContent = room.status;
@@ -375,8 +327,8 @@ function renderWaitingRoom(room) {
             item.className = 'roster-item is-empty';
             item.textContent = 'Libre';
         } else {
-            const isHostRunner = room.hostName && name.trim().toLowerCase() === room.hostName.trim().toLowerCase();
-            const soyYo = name.trim().toLowerCase() === pilot.toLowerCase();
+            const isHostRunner = !!room.hostUser && name === room.hostUser;
+            const soyYo = name === pilot;
             item.className = 'roster-item' + (isHostRunner ? ' is-host' : '') + (soyYo ? ' is-me' : '');
             item.textContent = (isHostRunner ? '👑 ' : '') + name + (soyYo ? ' (tú)' : '');
             item.title = isHostRunner ? 'Host de la sala' : 'Piloto';
@@ -393,27 +345,22 @@ function renderWaitingRoom(room) {
         redirecting = true;
         safeSetStorage('ecirace_car', selectedVehicleMemory);
         safeSetStorage('ecirace_vehicle', selectedVehicleMemory);
-        window.location.href = `runner.html?player=${encodeURIComponent(pilot)}&room=${encodeURIComponent(room.roomCode)}&car=${encodeURIComponent(selectedVehicleMemory)}`;
+        window.location.href = `runner.html?room=${encodeURIComponent(room.roomCode)}&car=${encodeURIComponent(selectedVehicleMemory)}`;
     }
 }
 
 btnStartRace.addEventListener('click', async () => {
-    const pilot = pilotNameDisplay.textContent.trim();
     btnStartRace.disabled = true;
     UI.setLabel(btnStartRace, "INICIANDO...");
 
     try {
-        const res = await fetch(`/api/rooms/${encodeURIComponent(activeRoomCode)}/start`, {
+        const res = await Session.api(`/api/rooms/${encodeURIComponent(activeRoomCode)}/start`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'ngrok-skip-browser-warning': 'true'
-            },
-            body: JSON.stringify({ hostName: pilot })
+            room: activeRoomCode,
+            body: {}
         });
         if (!res.ok) {
-            const err = await res.json().catch(() => ({ error: 'No se pudo iniciar la carrera.' }));
-            UI.toast(err.error || 'No se pudo iniciar la carrera.', 'error');
+            UI.toast((res.data && res.data.error) || 'No se pudo iniciar la carrera.', 'error');
             btnStartRace.disabled = false;
             UI.setLabel(btnStartRace, "INICIAR CARRERA");
         }
@@ -432,11 +379,12 @@ function conectarSocketDeSala(roomCode) {
         const socket = new WebSocket(wsUrl);
         stompClient = Stomp.over(socket);
         stompClient.debug = null;
-        stompClient.connect({}, () => {
+        stompClient.connect(Session.stompHeaders(), () => {
+            const key = Session.hostKey(roomCode);
             stompClient.subscribe(`/topic/rooms/${roomCode}/status`, (msg) => {
                 const updatedRoom = JSON.parse(msg.body);
                 renderWaitingRoom(updatedRoom);
-            });
+            }, key ? { hostKey: key } : {});
         }, () => {
             console.warn('No se pudo conectar el socket de la sala de espera; se sigue con polling.');
         });
@@ -450,13 +398,14 @@ btnLeaveWaitingRoom.addEventListener('click', () => {
 });
 
 btnGoDashboard.addEventListener('click', () => {
-    const room = (activeRoomCode || roomInput.value.trim().toUpperCase() || 'CAMPUS-ECI');
+    const room = Session.validRoomCode(activeRoomCode || roomInput.value || 'CAMPUS-ECI') || 'CAMPUS-ECI';
     window.location.href = `dashboard.html?room=${encodeURIComponent(room)}`;
 });
 
 btnLogout.addEventListener('click', async () => {
     if (await UI.confirm("¿Cerrar la sesión de este piloto?", "Cerrar sesión", "Seguir aquí")) {
-        safeRemoveStorage('ecirace_username');
+        if (activeRoomCode) await exitWaitingRoom();
+        await Session.logout();
         window.location.href = "index.html";
     }
 });
@@ -474,34 +423,27 @@ btnChangeNick.addEventListener('click', () => {
 });
 
 btnSaveTag.addEventListener('click', async () => {
-    const currentName = pilotNameDisplay.textContent.trim();
     const nextName = newTagInput.value.trim();
-    if (!nextName) return;
-
-    try {
-        const res = await fetch('/api/auth/username', {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-                'ngrok-skip-browser-warning': 'true'
-            },
-            body: JSON.stringify({ currentUsername: currentName, newUsername: nextName })
-        });
-        if (res.ok) {
-            const updated = await res.json();
-            safeSetStorage('ecirace_username', updated.username);
-            renderizarPerfil(updated);
-        } else {
-            safeSetStorage('ecirace_username', nextName);
-            await cargarPerfil(nextName);
-        }
-    } catch (e) {
-        safeSetStorage('ecirace_username', nextName);
-        await cargarPerfil(nextName);
+    if (!nextName || nextName === Session.username()) {
+        changeTagModal.style.display = "none";
+        return;
     }
-
-    changeTagModal.style.display = "none";
-    UI.toast(`Tag actualizado: ${pilotNameDisplay.textContent.trim()}`, 'ok');
+    if (!Session.validUsername(nextName)) {
+        UI.toast('El tag debe tener 3 a 16 caracteres: letras, números, punto, guion o guion bajo.', 'error');
+        return;
+    }
+    try {
+        const res = await Session.api('/api/auth/username', { method: 'PUT', body: { newUsername: nextName } });
+        if (res.ok && res.data && res.data.token) {
+            // El servidor emite un token nuevo: los anteriores dejan de funcionar
+            Session.save(res.data);
+            window.location.reload();
+            return;
+        }
+        UI.toast((res.data && res.data.error) || 'No se pudo cambiar el tag.', 'error');
+    } catch (e) {
+        UI.toast('Sin conexión con el servidor: el tag no cambió.', 'error');
+    }
 });
 
 btnCancelTag.addEventListener('click', () => { changeTagModal.style.display = "none"; });
@@ -521,16 +463,14 @@ async function cargarClasificacion() {
     const lista = document.getElementById('leaderboardList');
     lista.innerHTML = '<div class="g-board__empty">Cargando pilotos...</div>';
     try {
-        const res = await fetch('/api/auth/leaderboard', {
-            headers: { 'ngrok-skip-browser-warning': 'true', 'Accept': 'application/json' }
-        });
+        const res = await Session.api('/api/auth/leaderboard', { auth: false });
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        const pilotos = await res.json();
+        const pilotos = res.data || [];
         if (!pilotos.length) {
             lista.innerHTML = '<div class="g-board__empty">Aún no hay carreras terminadas. ¡La primera victoria puede ser tuya!</div>';
             return;
         }
-        const yo = pilotNameDisplay.textContent.trim().toLowerCase();
+        const yo = String(activePilot).toLowerCase();
         const medallas = ['🥇', '🥈', '🥉'];
         lista.innerHTML = '';
         pilotos.forEach((p, i) => {
@@ -598,7 +538,15 @@ function moverCarro(paso) {
 document.getElementById('btnPrevCar').addEventListener('click', () => moverCarro(-1));
 document.getElementById('btnNextCar').addEventListener('click', () => moverCarro(1));
 
-cargarPerfil(activePilot);
+// Botones de vehículo y sala por defecto (sin onclick en el HTML: la CSP no permite JS en línea)
+document.querySelectorAll('[data-vehicle]').forEach(btn => {
+    btn.addEventListener('click', () => window.selectVehicle(btn.dataset.vehicle));
+});
+document.querySelectorAll('#activeRoomsContainer .room-pill[data-code]').forEach(pill => {
+    pill.addEventListener('click', () => window.selectRoom(pill.dataset.code));
+});
+
+cargarPerfil();
 cargarSalasActivas();
 setInterval(cargarSalasActivas, 5000);
 

@@ -7,6 +7,8 @@ import edu.eci.arsw.eciracego.security.InputValidator;
 import edu.eci.arsw.eciracego.service.RoomService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.security.SecureRandom;
@@ -27,12 +29,21 @@ public class RoomServiceImpl implements RoomService {
 
     static final long FINISHED_TTL_MS = 15 * 60_000L;
     static final long WAITING_IDLE_TTL_MS = 2 * 60 * 60_000L;
-    static final long IN_PROGRESS_TTL_MS = 3 * 60 * 60_000L;
+    static final long IN_PROGRESS_TTL_MS = 60 * 60_000L;
+    public static final int DEFAULT_MAX_ROOMS = 2000;
 
     private final ConcurrentHashMap<String, Room> rooms = new ConcurrentHashMap<>();
     private final SecureRandom random = new SecureRandom();
+    /** Máximo de salas simultáneas en memoria (antes no había tope y se podían crear salas en bucle). */
+    private final int maxRooms;
 
     public RoomServiceImpl() {
+        this(DEFAULT_MAX_ROOMS);
+    }
+
+    @Autowired
+    public RoomServiceImpl(@Value("${ecirace.rooms.max:" + DEFAULT_MAX_ROOMS + "}") int maxRooms) {
+        this.maxRooms = Math.max(1, maxRooms);
         Room campusDefault = new Room(DEFAULT_ROOM, null);
         rooms.put(campusDefault.getRoomCode(), campusDefault);
         log.info("[RoomService] Sala predeterminada creada: {}", campusDefault.getRoomCode());
@@ -40,7 +51,7 @@ public class RoomServiceImpl implements RoomService {
 
     @Override
     public Optional<Room> createRoom(String hostUser, String preferredCode) {
-        if (rooms.size() >= MAX_ROOMS) {
+        if (rooms.size() >= maxRooms) {
             throw new IllegalStateException("Se alcanzó el máximo de salas activas");
         }
         String roomCode = (preferredCode != null && !preferredCode.isBlank())

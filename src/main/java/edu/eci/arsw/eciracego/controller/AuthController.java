@@ -36,19 +36,27 @@ public class AuthController {
     private final TokenService tokenService;
     private final GoogleTokenVerifier googleVerifier;
     private final RoomService roomService;
+    private final boolean demoTools;
 
     public AuthController(AuthService authService, TokenService tokenService,
-                          GoogleTokenVerifier googleVerifier, RoomService roomService) {
+                          GoogleTokenVerifier googleVerifier, RoomService roomService,
+                          @org.springframework.beans.factory.annotation.Value("${ecirace.demo-tools:false}") boolean demoTools) {
         this.authService = authService;
         this.tokenService = tokenService;
         this.googleVerifier = googleVerifier;
         this.roomService = roomService;
+        this.demoTools = demoTools;
     }
 
-    /** Configuración pública del login (el client ID de Google no es secreto). */
+    /**
+     * Configuración pública del front: el client ID de Google (no es secreto) y si se muestran las
+     * herramientas de demostración del corredor (simulador de ruta / "simular victoria").
+     */
     @GetMapping("/config")
     public Map<String, Object> config() {
-        return Map.of("googleEnabled", googleVerifier.isEnabled(), "googleClientId", googleVerifier.getClientId());
+        return Map.of("googleEnabled", googleVerifier.isEnabled(),
+                "googleClientId", googleVerifier.getClientId(),
+                "demoTools", demoTools);
     }
 
     @PostMapping("/google")

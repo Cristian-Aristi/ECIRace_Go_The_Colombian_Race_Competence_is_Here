@@ -4,8 +4,8 @@ import { check, sleep } from 'k6';
 import { Trend, Counter, Rate } from 'k6/metrics';
 // Pruebas de TODO ECIRace GO con los mismos 4 perfiles, umbrales y resumen JSON del laboratorio.
 // Dos escenarios en paralelo:
-//   api      -> recorre la API REST como lo hace el front: login, perfil, salas, unirse, iniciar,
-//               posiciones y resultado.
+//   api      -> recorre la API REST como lo hace el front: login, perfil, salas, unirse, iniciar
+//               y posiciones (todo con el token de sesión, como el navegador).
 //   carreras -> cada usuario virtual juega una carrera completa por WebSocket/STOMP: crea su sala,
 //               se une, la inicia, envía telemetría GPS cada segundo a 9 km/h y espera a que el
 //               servidor detecte que cruzó la meta.
@@ -66,18 +66,32 @@ export const options = {
   },
 };
 
-const JSON_HEADERS = { 'Content-Type': 'application/json' };
-const post = (path, body, name) =>
-  http.post(`${BASE}${path}`, JSON.stringify(body), { headers: JSON_HEADERS, tags: { name }, timeout: '5s' });
-const get = (path, name) => http.get(`${BASE}${path}`, { tags: { name }, timeout: '5s' });
-const uniqueCode = (prefix) => `${prefix}-${__VU}-${__ITER}-${Date.now() % 100000}`;
+const headers = (token) => Object.assign({ 'Content-Type': 'application/json' }, token ? { Authorization: `Bearer ${token}` } : {});
+const post = (path, body, name, token) =>
+  http.post(`${BASE}${path}`, JSON.stringify(body), { headers: headers(token), tags: { name }, timeout: '5s' });
+const get = (path, name, token) => http.get(`${BASE}${path}`, { headers: headers(token), tags: { name }, timeout: '5s' });
+// Máximo 20 caracteres (regla del servidor para códigos de sala)
+const uniqueCode = (prefix) => `${prefix}-${__VU}-${__ITER % 10000}-${Date.now() % 100000}`;
 
-// Crea una sala propia (código explícito: no agota los códigos ECI-XXXX), se une y la inicia.
-function prepareRace(user, prefix, metaLat, metaLon) {
-  const created = post('/api/rooms/create', { hostName: user, preferredCode: uniqueCode(prefix) }, 'crear_sala');
-  const room = created.status === 201 ? created.json('roomCode') : null;
-  const joined = room ? post(`/api/rooms/${room}/join`, { runnerId: user }, 'unirse_sala') : null;
-  const started = room ? post(`/api/rooms/${room}/start`, { hostName: user, metaLat, metaLon }, 'iniciar_carrera') : null;
+// Un piloto invitado por usuario virtual y por ejecución: los tags ya registrados no se pueden reclamar,
+// así que llevan un sufijo aleatorio (máx. 16 caracteres). El token se reutiliza en cada iteración.
+const RUN_TAG = Math.random().toString(36).slice(2, 7);
+let session = null;
+function login(prefix) {
+  if (session) return session;
+  const user = `${prefix}${__VU}_${RUN_TAG}`.slice(0, 16);
+  const res = post('/api/auth/guest', { username: user }, 'login_invitado');
+  const ok = check(res, { 'login 201': (r) => r.status === 201 && r.json('profile.username') === user });
+  session = ok ? { user, token: res.json('token') } : null;
+  return session;
+}
+
+// Crea una sala propia (código explícito), se une y la inicia como host (token de sesión).
+function prepareRace(s, prefix, metaLat, metaLon) {
+  const created = post('/api/rooms/create', { preferredCode: uniqueCode(prefix) }, 'crear_sala', s.token);
+  const room = created.status === 201 ? created.json('room.roomCode') : null;
+  const joined = room ? post(`/api/rooms/${room}/join`, {}, 'unirse_sala', s.token) : null;
+  const started = room ? post(`/api/rooms/${room}/start`, { metaLat, metaLon }, 'iniciar_carrera', s.token) : null;
   const ok = check(null, {
     'sala creada (201)': () => created.status === 201,
     'unido a la sala (200)': () => !!joined && joined.status === 200,
@@ -89,25 +103,22 @@ function prepareRace(user, prefix, metaLat, metaLon) {
 
 // ---------------- Escenario 1: API REST ----------------
 export function apiFlow() {
-  const user = `k6api_${__VU}`; // un piloto por usuario virtual: la base de datos no crece sin límite
+  const s = login('k6a');
+  if (!s) {
+    sleep(1);
+    return;
+  }
 
-  const login = post('/api/auth/guest', { username: user }, 'login_invitado');
-  check(login, { 'login 200': (r) => r.status === 200 && r.json('username') === user });
-
-  const profileRes = get(`/api/auth/profile/${user}`, 'perfil_piloto');
-  check(profileRes, { 'perfil 200': (r) => r.status === 200 });
+  check(get('/api/auth/me', 'perfil_piloto', s.token), { 'perfil 200': (r) => r.status === 200 });
 
   const list = get('/api/rooms', 'listar_salas');
   check(list, { 'salas 200': (r) => r.status === 200 });
 
-  const room = prepareRace(user, 'K6API', 4.80, -74.00); // meta lejana: esta sala no recibe telemetría
+  const room = prepareRace(s, 'KA', 4.80, -74.00); // meta lejana: esta sala no recibe telemetría
   if (room) {
-    check(get(`/api/rooms/${room}`, 'consultar_sala'), { 'sala 200': (r) => r.status === 200 });
-    check(get(`/api/rooms/${room}/positions`, 'posiciones_sala'), { 'posiciones 200': (r) => r.status === 200 });
+    check(get(`/api/rooms/${room}`, 'consultar_sala', s.token), { 'sala 200': (r) => r.status === 200 });
+    check(get(`/api/rooms/${room}/positions`, 'posiciones_sala', s.token), { 'posiciones 200': (r) => r.status === 200 });
   }
-
-  const result = post('/api/auth/race-result', { username: user, won: false }, 'registrar_resultado');
-  check(result, { 'resultado 200': (r) => r.status === 200 });
 }
 
 // ---------------- Escenario 2: carrera completa por WebSocket ----------------
@@ -128,10 +139,14 @@ function parseFrame(raw) {
 }
 
 export function raceFlow() {
-  const user = `k6run_${__VU}`;
-  check(post('/api/auth/guest', { username: user }, 'login_invitado'), { 'login 200': (r) => r.status === 200 });
+  const s = login('k6r');
+  if (!s) {
+    sleep(1);
+    return;
+  }
+  const user = s.user;
 
-  const room = prepareRace(user, 'K6RACE', START.lat, START.lon + META_METROS / M_PER_DEG_LON);
+  const room = prepareRace(s, 'KR', START.lat, START.lon + META_METROS / M_PER_DEG_LON);
   if (!room) {
     sleep(1);
     return;
@@ -140,7 +155,8 @@ export function raceFlow() {
   let won = false;
   let stompError = false;
   const res = ws.connect(WS_URL, { tags: { name: 'carrera_ws' } }, (socket) => {
-    socket.on('open', () => socket.send(frame('CONNECT', { 'accept-version': '1.2', 'heart-beat': '0,0' })));
+    // El token de sesión autentica la conexión STOMP: el servidor fija al corredor (ignora runnerId)
+    socket.on('open', () => socket.send(frame('CONNECT', { 'accept-version': '1.2', 'heart-beat': '0,0', Authorization: `Bearer ${s.token}` })));
 
     socket.on('message', (raw) => {
       const f = parseFrame(raw);
@@ -152,7 +168,7 @@ export function raceFlow() {
           // Posición calculada por tiempo transcurrido: la velocidad es siempre 9 km/h aunque k6 se retrase
           const now = Date.now();
           const lon = START.lon + (SPEED_MPS * (now - t0) / 1000) / M_PER_DEG_LON;
-          const packet = { runnerId: user, roomCode: room, latitude: START.lat, longitude: lon, timestamp: now };
+          const packet = { roomCode: room, latitude: START.lat, longitude: lon, timestamp: now };
           socket.send(frame('SEND', { destination: '/app/telemetry', 'content-type': 'application/json' }, JSON.stringify(packet)));
           sent.add(1);
         }, 1000);
@@ -185,10 +201,7 @@ export function raceFlow() {
   });
   finished.add(won);
 
-  if (won) {
-    // Igual que el front al terminar la carrera
-    check(post('/api/auth/race-result', { username: user, won: true }, 'registrar_resultado'), { 'resultado 200': (r) => r.status === 200 });
-  }
+  // El resultado lo guarda el propio servidor al detectar la meta (ya no existe /api/auth/race-result)
   sleep(1);
 }
 

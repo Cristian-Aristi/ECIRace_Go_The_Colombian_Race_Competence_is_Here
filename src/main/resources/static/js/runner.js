@@ -11,37 +11,31 @@ const UI = window.GameUI || {
 };
 
 const urlParams = new URLSearchParams(window.location.search);
-let runnerId = urlParams.get('player');
+const roomCode = Session.validRoomCode(urlParams.get('room')) || 'CAMPUS-ECI';
 let selectedCar = urlParams.get('car');
 
-// 🚀 1. Blindaje de localStorage y lectura del carro elegido en el Lobby
+// El piloto es el de la sesión emitida por el servidor (ya no se acepta ?player= en la URL).
+// El servidor además ignora cualquier runnerId que mande el cliente: usa el del token.
+if (!Session.requireLogin(roomCode)) {
+    throw new Error('Sin sesión: redirigiendo al inicio');
+}
+const runnerId = Session.username();
+
 try {
-    if (!runnerId) {
-        runnerId = localStorage.getItem('ecirace_username');
-    }
     if (!selectedCar) {
         selectedCar = localStorage.getItem('ecirace_car') || localStorage.getItem('selectedCar');
     }
 } catch (e) {
     console.warn("Memoria local restringida por el navegador.");
 }
-
-if (!runnerId || runnerId.trim() === '') {
-    alert("Acceso denegado: Debes iniciar sesión en el Lobby antes de ingresar a la pista.");
-    window.location.href = "index.html";
-}
-runnerId = runnerId.trim();
 // Solo se aceptan los valores del enum VehicleType (los mismos que usa el Lobby y el Dashboard)
 const VEHICULOS_VALIDOS = ['RENAULT_4', 'CHEVROLET_SPARK', 'MAZDA_323'];
 selectedCar = (selectedCar || '').trim().toUpperCase();
 if (!VEHICULOS_VALIDOS.includes(selectedCar)) selectedCar = 'RENAULT_4';
 
 try {
-    localStorage.setItem('ecirace_username', runnerId);
     localStorage.setItem('ecirace_car', selectedCar);
 } catch (e) {}
-
-const roomCode = (urlParams.get('room') || 'CAMPUS-ECI').toUpperCase();
 
 // ---- Carro elegido en el HUD ----
 const IMAGEN_CARRO = { RENAULT_4: 'img/renault.png?v=2', CHEVROLET_SPARK: 'img/spark.png?v=2', MAZDA_323: 'img/mazda.png?v=2' };
@@ -206,7 +200,6 @@ function log(msg, type = 'info') {
 // velocidad sobre el tiempo real entre dos lecturas del sensor y no sobre el intervalo de envío.
 function construirPayload(lat, lng, ts) {
     return {
-        runnerId: runnerId,
         latitude: lat,
         longitude: lng,
         roomCode: roomCode,
@@ -255,7 +248,7 @@ function mostrarNotificacionVictoria(winnerId, soyElGanador) {
     overlay.className = 'g-result' + (soyElGanador ? '' : ' g-result--lose');
     overlay.setAttribute('role', 'alertdialog');
     overlay.setAttribute('aria-modal', 'true');
-    const volver = `lobby.html?player=${encodeURIComponent(runnerId)}`;
+    const volver = 'lobby.html';
     const tablero = `dashboard.html?room=${encodeURIComponent(roomCode)}`;
     overlay.innerHTML = `
         <div class="g-result__card g-panel">
@@ -310,9 +303,8 @@ function procesarEstadoSala(room) {
         detenerTodo();
         hudStatus.textContent = "FINALIZADA";
 
-        const soyElGanador = !!room.winnerId && room.winnerId.trim().toLowerCase() === runnerId.trim().toLowerCase();
+        const soyElGanador = !!room.winnerId && room.winnerId === runnerId;
         mostrarNotificacionVictoria(room.winnerId, soyElGanador);
-        try { localStorage.removeItem('ecirace_username'); } catch (e) {}
     }
 }
 
@@ -340,14 +332,11 @@ function applyGateState(status) {
 
 async function consultarEstadoSala() {
     try {
-        const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}`, {
-            headers: {
-                'ngrok-skip-browser-warning': 'true',
-                'Accept': 'application/json'
-            }
-        });
+        const res = await Session.api(`/api/rooms/${encodeURIComponent(roomCode)}`);
         if (res.ok) {
-            procesarEstadoSala(await res.json());
+            procesarEstadoSala(res.data);
+        } else if (res.status === 401) {
+            Session.requireLogin(roomCode);
         } else {
             applyGateState('WAITING');
         }
@@ -374,7 +363,7 @@ function conectarWebSocket() {
     stompClient = Stomp.over(socket);
     stompClient.debug = null;
 
-    stompClient.connect({}, function () {
+    stompClient.connect(Session.stompHeaders(), function () {
         isWsConnected = true;
         if (wsStatusDisplay) {
             wsStatusDisplay.innerText = "CONECTADO (En Vivo)";
@@ -564,14 +553,9 @@ if (btnSimulateWin) {
             let targetLon = -74.043000;
 
             try {
-                const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}`, {
-                    headers: {
-                        'ngrok-skip-browser-warning': 'true',
-                        'Accept': 'application/json'
-                    }
-                });
+                const res = await Session.api(`/api/rooms/${encodeURIComponent(roomCode)}`);
                 if (res.ok) {
-                    const room = await res.json();
+                    const room = res.data;
                     if (room.metaLat && room.metaLon) {
                         targetLat = room.metaLat;
                         targetLon = room.metaLon;
@@ -630,6 +614,20 @@ if (btnSimulateWin) {
         }
     });
 }
+
+// Herramientas de demostración (simulador de ruta y "simular victoria"): solo si el servidor las
+// habilita con ECIRACE_DEMO_TOOLS=true. En producción permitirían ganar sin moverse.
+['btnToggleSim', 'btnSimulateWin'].forEach(id => {
+    const b = document.getElementById(id);
+    if (b) b.style.display = 'none';
+});
+Session.config().then(cfg => {
+    if (!cfg.demoTools) return;
+    ['btnToggleSim', 'btnSimulateWin'].forEach(id => {
+        const b = document.getElementById(id);
+        if (b) b.style.display = '';
+    });
+});
 
 conectarWebSocket();
 consultarEstadoSala();

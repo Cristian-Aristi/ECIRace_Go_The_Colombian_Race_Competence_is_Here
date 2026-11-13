@@ -1,17 +1,34 @@
 """Ejecutar desde la raiz del proyecto ECIRace GO (donde esta pom.xml). Python 3.10+; Docker Compose v2.
 Adaptacion de scripts/lab.py del laboratorio ARSW: misma interfaz, apuntando a ECIRace (puerto 8080).
 Comandos extra: real (quita la simulacion) y proyecto <perfil> (pruebas de todo ECIRace con k6)."""
-import argparse,datetime,json,pathlib,subprocess,time,urllib.error,urllib.request
+import argparse,datetime,json,os,pathlib,secrets,subprocess,time,urllib.error,urllib.request
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 APP='http://localhost:8080'
-TARGET=f'{APP}/api/auth/profile/Daniel'
+# Consulta real a la base de datos (antes: perfil del piloto semilla "Daniel", que ya no existe)
+TARGET=f'{APP}/api/auth/leaderboard'
+ENV_FILE=ROOT/'.env'   # local y en .gitignore: Docker Compose lo lee solo
+def secrets_env():
+ """Genera una sola vez el token de /admin/config, la contraseña de Grafana y el secreto de sesiones."""
+ values={}
+ if ENV_FILE.exists():
+  for line in ENV_FILE.read_text(encoding='utf-8').splitlines():
+   if '=' in line and not line.lstrip().startswith('#'):k,v=line.split('=',1);values[k.strip()]=v.strip()
+ changed=False
+ for key,gen in (('ECIRACE_LAB_TOKEN',lambda:secrets.token_urlsafe(24)),('GRAFANA_ADMIN_PASSWORD',lambda:secrets.token_urlsafe(18)),('ECIRACE_TOKEN_SECRET',lambda:secrets.token_urlsafe(48))):
+  if not values.get(key):values[key]=gen();changed=True
+ if changed:
+  ENV_FILE.write_text(''.join(f'{k}={v}\n' for k,v in values.items()),encoding='utf-8')
+  try:ENV_FILE.chmod(0o600)
+  except OSError:pass
+ return values
+ENV=secrets_env()
 SERVICES=['ecirace-server','probe','prometheus','grafana','k6-results']
 JOBS={'ecirace','probe','k6-results'}
-def compose(*args,check=True):return subprocess.run(['docker','compose',*args],cwd=ROOT,check=check)
+def compose(*args,check=True):return subprocess.run(['docker','compose',*args],cwd=ROOT,check=check,env={**os.environ,**ENV})
 def get(url):
  with urllib.request.urlopen(url,timeout=5) as r:return r.read()
 def config(**kwargs):
- req=urllib.request.Request(f'{APP}/admin/config',json.dumps(kwargs).encode(),{'Content-Type':'application/json','X-Lab-Token':'arsw-local'})
+ req=urllib.request.Request(f'{APP}/admin/config',json.dumps(kwargs).encode(),{'Content-Type':'application/json','X-Lab-Token':ENV['ECIRACE_LAB_TOKEN']})
  try:print(urllib.request.urlopen(req,timeout=5).read().decode())
  except urllib.error.HTTPError as e:
   raise SystemExit(f'/admin/config respondio {e.code}. Verifique ECIRACE_LAB_ENABLED=true en docker-compose.yml y reconstruya: python scripts/lab.py up') from e
@@ -38,6 +55,7 @@ elif a.action=='doctor':
  health={t['labels']['job']:t['health'] for t in targets}
  assert set(health)==JOBS and all(h=='up' for h in health.values()),f'Targets {health}. ECIRace tarda en arrancar: espere 30 s y vuelva a ejecutar doctor'
  print('OK: los tres targets UP. Ejecute la prueba carga y compruebe Grafana antes de clase.')
+ print(f"Grafana: http://localhost:3000  usuario admin  contraseña {ENV['GRAFANA_ADMIN_PASSWORD']} (en .env)")
 elif a.action=='sample':
  for _ in range(100):get(TARGET);time.sleep(.05)
 elif a.action=='fault':

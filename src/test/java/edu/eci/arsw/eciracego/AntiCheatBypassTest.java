@@ -87,4 +87,15 @@ class AntiCheatBypassTest {
         u.setCar("mazda_323");
         assertEquals("MAZDA_323", u.getCar());
     }
+
+    @Test
+    void stalePositionsAndRemovedRoomsAreCleaned() {
+        RoomServiceImpl rooms = new RoomServiceImpl();
+        rooms.createRoom(null, "SALA-1");
+        RaceManager m = new RaceManager(new AntiCheatEngine(), rooms, Mockito.mock(UserProfileRepository.class), serverClock::get);
+        assertTrue(m.updateUbication(at(4.78, -74.04, 1)));
+        assertEquals(0, m.cleanup(java.util.List.of(), serverClock.get()));
+        assertEquals(1, m.cleanup(java.util.List.of(), serverClock.get() + 11 * 60_000L));
+        assertTrue(m.getGlobalState().isEmpty());
+    }
 }

@@ -35,11 +35,12 @@ Proyecto del curso **Arquitecturas de Software (ARSW)** · Escuela Colombiana de
 7. [Cómo arrancar el proyecto](#-cómo-arrancar-el-proyecto)
 8. [Cómo jugar](#-cómo-jugar)
 9. [API REST y canales WebSocket](#-api-rest-y-canales-websocket)
-10. [Pruebas](#-pruebas)
-11. [Observabilidad y pruebas de rendimiento](#-observabilidad-y-pruebas-de-rendimiento)
-12. [Integración y entrega continua](#-integración-y-entrega-continua)
-13. [Despliegue en AWS](#️-despliegue-en-aws)
-14. [Gestión del proyecto (Sprints)](#-gestión-del-proyecto-sprints)
+10. [Seguridad](#-seguridad)
+11. [Pruebas](#-pruebas)
+12. [Observabilidad y pruebas de rendimiento](#-observabilidad-y-pruebas-de-rendimiento)
+13. [Integración y entrega continua](#-integración-y-entrega-continua)
+14. [Despliegue en AWS](#️-despliegue-en-aws)
+15. [Gestión del proyecto (Sprints)](#-gestión-del-proyecto-sprints)
 
 ---
 
@@ -89,7 +90,7 @@ flowchart LR
     end
 
     subgraph Servidor["Servidor central · Spring Boot"]
-        WS["WebSocket STOMP<br/>/race-ws-native · /race-ws"]
+        WS["WebSocket STOMP<br/>/race-ws-native<br/>(token de sesión)"]
         RC["RaceController<br/>@MessageMapping /telemetry"]
         POOL["Pool RaceWorker<br/>8–16 hilos"]
         AC["AntiCheatEngine<br/>(Haversine)"]
@@ -102,7 +103,7 @@ flowchart LR
 
     R -- "posición GPS" --> WS --> RC --> POOL --> AC --> RM
     GL -- "colisiones · meta · ganador" --> RM
-    GL -- "/topic/gamestate" --> WS
+    GL -- "/topic/rooms/{código}/status" --> WS
     RC -- "/topic/rooms/{código}" --> WS
     WS --> D & L & R
     L & D -- HTTP --> API --> DB
@@ -112,7 +113,7 @@ flowchart LR
 **Decisiones de diseño**
 
 - **Servidor autoritativo.** El cliente solo reporta su posición. El servidor decide qué es válido, quién colisiona y quién gana, lo que evita trampas desde el navegador.
-- **Recepción desacoplada del procesamiento.** Los frames STOMP se entregan a un `ThreadPoolTaskExecutor` (`RaceWorker`, 8–16 hilos, cola de 100, `CallerRunsPolicy`). Así el hilo del socket no se bloquea.
+- **Recepción desacoplada del procesamiento.** Los frames STOMP se entregan a un `ThreadPoolTaskExecutor` (`RaceWorker`, 8–16 hilos, cola de 100). Si la cola se llena se descarta la posición más vieja (`DiscardOldestPolicy`), así el hilo del socket nunca se bloquea.
 - **Estado compartido concurrente.** Las posiciones viven en un `ConcurrentHashMap`. El ganador se declara de forma atómica para que dos llegadas simultáneas no produzcan dos ganadores.
 - **Broker en memoria y una sola instancia.** Las salas, el game loop y el broker STOMP simple viven en memoria. Por eso el despliegue usa **una réplica**. Para escalar horizontalmente habría que pasar a un broker externo (Redis o RabbitMQ).
 
@@ -122,7 +123,7 @@ flowchart LR
 |---|---|
 | Backend | Java 21, Spring Boot 4.1.1 (Web MVC, WebSocket/STOMP, Data JPA, Actuator) |
 | Persistencia | H2 en memoria (local) · PostgreSQL 16 (AWS) |
-| Frontend | HTML, CSS y JavaScript, Leaflet, STOMP sobre WebSocket nativo y SockJS |
+| Frontend | HTML, CSS y JavaScript, Leaflet 1.9.4 y stomp.js 2.3.3 (servidos localmente en `static/vendor`) sobre WebSocket nativo |
 | Observabilidad | Micrometer, Prometheus 3.7, Grafana 12.2, sonda de disponibilidad en Python |
 | Rendimiento | k6 1.3 (API REST y carreras completas por WebSocket) |
 | Contenedores | Docker multi-stage (Maven → JRE Alpine), Docker Compose |
@@ -192,7 +193,7 @@ El servidor queda en **http://localhost:8080**.
 | Recurso | URL |
 |---|---|
 | Aplicación | http://localhost:8080 |
-| Consola H2 | http://localhost:8080/h2-console (JDBC `jdbc:h2:mem:eciracedb`, usuario `sa`) |
+| Consola H2 | Solo con `SPRING_PROFILES_ACTIVE=dev`: http://localhost:8080/h2-console (JDBC `jdbc:h2:mem:eciracedb`, usuario `sa`) |
 | Salud | http://localhost:8080/actuator/health |
 | Métricas | http://localhost:8080/actuator/prometheus |
 
@@ -215,9 +216,11 @@ python scripts/lab.py doctor    # verifica que todos los targets estén UP
 |---|---|---|
 | ECIRace GO | http://localhost:8080 | — |
 | Prometheus | http://localhost:9090 | — |
-| Grafana | http://localhost:3000 | `admin` / `arsw-lab-2026` |
+| Grafana | http://localhost:3000 | `admin` / la contraseña aleatoria de `.env` (la muestra `lab.py doctor`) |
 
 Para apagar el entorno: `python scripts/lab.py down`.
+
+> `scripts/lab.py` genera la primera vez un archivo **`.env`** (fuera de git) con el token de `/admin/config`, la contraseña de Grafana y el secreto de las sesiones. El servidor solo escucha en `127.0.0.1:8080`, y en este entorno local el límite por IP está apagado y las herramientas de demostración están encendidas.
 
 ### Probar con celulares en local
 
@@ -229,11 +232,19 @@ ngrok http 8080
 
 Abre la URL `https://...ngrok...` en el computador y en los celulares. El cliente detecta HTTPS y se conecta automáticamente por `wss://`.
 
+Como el servidor solo acepta su propio origen, agrega la URL del túnel antes de arrancar:
+
+```bash
+ECIRACE_ALLOWED_ORIGINS=https://tu-subdominio.ngrok-free.app ./mvnw spring-boot:run
+```
+
+Para el login con Google desde el túnel, añade también esa URL como *origen de JavaScript autorizado* del client ID (ver [Seguridad](#-seguridad)).
+
 ## 🎮 Cómo jugar
 
-1. **Anfitrión.** En `index.html` ingresa como invitado o con Google y **crea una sala** (código propio o generado). Se abre el **tablero** con el mapa.
+1. **Anfitrión.** En el computador, `index.html` → **Centro de control** → **crear sala** (código propio o generado). Se abre el **tablero** con el mapa. Ese navegador recibe la **clave del host**, la única que permite mover la meta e iniciar la carrera. Un piloto con sesión también puede crear una sala desde su garaje.
 2. **Invitar.** Desde el tablero copia el **enlace de la sala** y compártelo con los pilotos (máximo 6).
-3. **Pilotos.** Abren el enlace en el celular, ingresan su *tag*, **eligen vehículo** y esperan en la sala.
+3. **Pilotos.** Abren el enlace en el celular, inician sesión con **Google** o como **invitado** (un *tag* nuevo, que nadie más tenga), **eligen vehículo** y esperan en la sala.
 4. **Meta.** El anfitrión ubica la **línea de meta** con un clic en el mapa y **inicia la carrera**.
 5. **Carrera.** Los celulares transmiten su GPS. El tablero muestra a todos en vivo, la consola registra la telemetría aceptada y la descartada por el anti-trampa, y el game loop resuelve las colisiones.
 6. **Ganador.** El primero en entrar al radio de la meta gana. El resultado llega a todos y se guarda en el perfil del piloto.
@@ -242,30 +253,89 @@ Abre la URL `https://...ngrok...` en el computador y en los celulares. El client
 
 ### REST
 
-| Método | Ruta | Descripción |
-|---|---|---|
-| `POST` | `/api/auth/guest` | Ingreso como invitado |
-| `POST` | `/api/auth/google` | Ingreso con Google y *tag* de piloto |
-| `GET` | `/api/auth/profile/{username}` | Perfil y estadísticas del piloto |
-| `PUT` | `/api/auth/username` | Cambiar el *tag* |
-| `POST` | `/api/auth/race-result` | Registrar el resultado de una carrera |
-| `POST` | `/api/rooms/create` | Crear sala |
-| `GET` | `/api/rooms` | Listar salas |
-| `GET` | `/api/rooms/{code}` | Consultar una sala |
-| `POST` | `/api/rooms/{code}/join` | Unirse a una sala |
-| `POST` | `/api/rooms/{code}/start` | Iniciar la carrera (solo el anfitrión, con las coordenadas de la meta) |
-| `GET` | `/api/rooms/{code}/positions` | Última posición conocida de cada corredor |
+Las rutas marcadas con 🔑 exigen `Authorization: Bearer <token>` (lo devuelven `/api/auth/guest` y `/api/auth/google`). Las marcadas con 🏁 aceptan además la cabecera `X-Host-Key` (la clave del host que entrega `/api/rooms/create`).
+
+| Método | Ruta | Acceso | Descripción |
+|---|---|---|---|
+| `GET` | `/api/auth/config` | Público | Client ID de Google y si están activas las herramientas de demostración |
+| `POST` | `/api/auth/guest` | Público | Crea un piloto invitado **nuevo** y devuelve `{token, profile}`. Un *tag* existente responde `409` |
+| `POST` | `/api/auth/google` | Público | Verifica el ID token de Google en el servidor. La primera vez responde `409 USERNAME_REQUIRED` hasta que se elija un *tag* |
+| `GET` | `/api/auth/me` | 🔑 | Perfil completo del piloto (con correo) |
+| `POST` | `/api/auth/logout` | 🔑 | Cierra la sesión en todos los dispositivos |
+| `PUT` | `/api/auth/username` | 🔑 | Cambia el *tag* propio y devuelve un token nuevo |
+| `GET` | `/api/auth/profile/{username}` | Público | Perfil público (sin correo) |
+| `GET` | `/api/auth/leaderboard?limit=10` | Público | Clasificación (máx. 50, sin correos) |
+| `POST` | `/api/rooms/create` | Público (con límite) | Crea la sala y devuelve `{room, hostKey}`. Con 🔑, el piloto queda como host |
+| `GET` | `/api/rooms` | Público | Salas activas: solo código, estado y ocupación |
+| `GET` | `/api/rooms/{code}` | 🔑 corredor/host o 🏁 | Estado y roster de la sala |
+| `GET` | `/api/rooms/{code}/positions` | 🔑 corredor/host o 🏁 | Última posición conocida de cada corredor |
+| `POST` | `/api/rooms/{code}/join` | 🔑 | Unirse (siempre como el piloto del token) |
+| `POST` | `/api/rooms/{code}/leave` | 🔑 | Salir de la sala de espera |
+| `PUT` | `/api/rooms/{code}/meta` | 🔑 host o 🏁 | Mover la meta antes de la largada |
+| `POST` | `/api/rooms/{code}/start` | 🔑 host o 🏁 | Iniciar la carrera con las coordenadas de la meta |
+
+Los errores responden JSON `{ "error": "...", "code": "..." }` con el código HTTP correspondiente (400, 401, 403, 404, 409 o 429).
 
 ### WebSocket (STOMP)
 
 | Tipo | Destino | Descripción |
 |---|---|---|
-| Endpoint | `/race-ws-native` | WebSocket nativo (producción, ngrok, AWS) |
-| Endpoint | `/race-ws` | WebSocket con SockJS (compatibilidad local) |
-| Envío | `/app/telemetry` | Posición GPS del corredor |
-| Suscripción | `/topic/rooms/{code}` | Telemetría aceptada de la sala |
-| Suscripción | `/topic/rooms/{code}/status` | Estado de la sala (jugadores, inicio, ganador) |
-| Suscripción | `/topic/gamestate` | Estado global emitido por el game loop |
+| Endpoint | `/race-ws-native` | WebSocket nativo. El `CONNECT` lleva `Authorization: Bearer <token>` |
+| Envío | `/app/telemetry` | Posición GPS del corredor. Exige sesión, el corredor es el del token y hay un límite de 5 paquetes/s |
+| Suscripción | `/topic/rooms/{code}` | Telemetría aceptada de la sala (corredores y host; el tablero envía la cabecera `hostKey`) |
+| Suscripción | `/topic/rooms/{code}/status` | Estado de la sala: jugadores, inicio y ganador |
+
+Los clientes no pueden publicar en `/topic/**` ni suscribirse a salas ajenas. El antiguo `/topic/gamestate`, que difundía las posiciones de todas las salas, ya no existe.
+
+## 🔐 Seguridad
+
+En el Sprint 9 se hizo una auditoría de seguridad de la API y se corrigieron todos sus hallazgos:
+
+| Área | Medida |
+|---|---|
+| Identidad | El ID token de Google se **verifica en el servidor**: firma RS256 con las llaves de Google, emisor, audiencia (nuestro client ID), expiración y correo verificado. Los invitados no pueden reclamar *tags* existentes, y los *tags* son únicos sin importar mayúsculas |
+| Sesión | Token JWT HS256 propio, válido 7 días, firmado con `ECIRACE_TOKEN_SECRET`. Cada perfil tiene una clave de sesión que rota al cerrar sesión o cambiar de *tag*, lo que invalida los tokens anteriores |
+| Autorización | El piloto siempre sale del token, nunca del cuerpo de la petición. La sala se controla con la clave del host, y solo corredores y host ven roster, meta y posiciones |
+| WebSocket | `CONNECT` autenticado, `SEND` solo a `/app/**` y suscripciones solo a la sala propia |
+| Anti-trampa | El tiempo usado para calcular la velocidad nunca supera el tiempo real medido en el servidor (+3 s). Se rechazan coordenadas `NaN`/`Infinity` o fuera de rango y los paquetes desordenados |
+| Entradas | Listas blancas para *tags* (`3-16` caracteres sin espacios), códigos de sala y coordenadas. Las respuestas de error son JSON sin detalles internos |
+| Datos personales | El correo solo lo ve su dueño (`/api/auth/me`). El perfil público, la clasificación y la lista de salas no exponen correos, rosters ni ubicaciones |
+| Abuso | Límite por IP (10 registros o salas en ráfaga y luego 1 cada 6 s; 120 peticiones en ráfaga y luego 20/s), máximo de salas (`ECIRACE_ROOMS_MAX`), limpieza automática de salas y posiciones, y mensajes STOMP de máximo 16 KB |
+| Navegador | CSP estricta (solo scripts propios y el SDK de Google), `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy` y `Permissions-Policy`. Leaflet y stomp.js se sirven localmente y no hay JavaScript en línea |
+| CORS | Solo el mismo origen. Orígenes extra con `ECIRACE_ALLOWED_ORIGINS` |
+| Infraestructura | Actuator en el puerto 8081 (perfil `cloud`), alcanzable solo por Caddy. Caddy rechaza rutas con `;`. El contenedor corre como usuario sin privilegios y la contraseña de métricas viaja a AWS solo como hash bcrypt. Las GitHub Actions están fijadas por SHA y el CD solo publica desde `main` |
+| Laboratorio | `/admin/config` exige un token aleatorio sin valor por defecto (comparación en tiempo constante) y el servidor local solo escucha en `127.0.0.1` |
+
+### Activar el inicio de sesión con Google
+
+1. En [Google Cloud Console](https://console.cloud.google.com/apis/credentials), crea (o elige) un proyecto y configura la **pantalla de consentimiento OAuth** (tipo *Externo*, con el nombre de la app y un correo de soporte).
+2. **Crear credenciales → ID de cliente de OAuth → Aplicación web.**
+3. En **Orígenes de JavaScript autorizados** agrega las URL desde donde se abre el juego, por ejemplo:
+   - `https://ecirace-go.duckdns.org`
+   - `https://<ip>.sslip.io` (la URL de respaldo)
+   - `http://localhost:8080` y `http://localhost` (desarrollo)
+
+   No hace falta ningún URI de redireccionamiento, porque se usa el modo *popup*.
+4. Copia el **ID de cliente** (`123456789-abc….apps.googleusercontent.com`). No es secreto.
+5. Pásalo al servidor:
+   - **AWS:** `python scripts/aws.py deploy --google-client-id 123456789-abc.apps.googleusercontent.com`
+   - **Local:** `GOOGLE_CLIENT_ID=... ./mvnw spring-boot:run`, o en el `.env` que usa `docker compose`.
+
+Sin client ID, el botón de Google no aparece y solo está disponible el ingreso como invitado.
+
+### Variables de configuración
+
+| Variable | Por defecto | Uso |
+|---|---|---|
+| `GOOGLE_CLIENT_ID` | vacío | Client ID web de Google Identity Services |
+| `ECIRACE_TOKEN_SECRET` | aleatorio en cada arranque | Secreto (≥ 32 bytes) de los tokens de sesión. En AWS lo genera la instancia |
+| `ECIRACE_ALLOWED_ORIGINS` | vacío (mismo origen) | Orígenes extra para CORS y WebSocket, separados por comas |
+| `ECIRACE_RATELIMIT_ENABLED` | `true` | Límite por IP (apagar solo para pruebas de carga) |
+| `ECIRACE_ROOMS_MAX` | `2000` | Máximo de salas simultáneas |
+| `ECIRACE_DEMO_TOOLS` | `false` | Muestra el simulador de ruta y el botón **Simular victoria** en el corredor (solo para demos) |
+| `ECIRACE_LAB_TOKEN` | vacío (bloqueado) | Token de `/admin/config` en el modo laboratorio |
+
+> Los pilotos de prueba (Daniel, Cristian, Santiago) y el botón "Probar Google sin Client ID" se eliminaron. Al arrancar, los perfiles semilla que sigan con los datos originales se borran de la base de datos. Las cuentas antiguas, creadas sin credenciales, siguen en la clasificación, pero nadie puede volver a entrar con ellas.
 
 ## 🧪 Pruebas
 
@@ -273,14 +343,19 @@ Abre la URL `https://...ngrok...` en el computador y en los celulares. El client
 ./mvnw test
 ```
 
-Hay **31 pruebas automatizadas** organizadas en las siguientes suites:
+Hay **69 pruebas automatizadas** organizadas en las siguientes suites:
 
 | Suite | Pruebas | Qué verifica |
 |---|---|---|
 | `AntiCheatEngineTest` | 4 | Distancia y velocidad con Haversine y descarte de telemetría anómala |
-| `RoomServiceTest` | 7 | Creación de salas (código automático y propio, duplicados), cupo de 6 y que solo el anfitrión inicie |
+| `AntiCheatBypassTest` | 7 | Las trampas de la auditoría ya no funcionan: `NaN`, timestamps atrasados o inflados, texto libre en `car` y limpieza de posiciones |
+| `RoomServiceTest` | 14 | Salas (códigos, duplicados, cupo), clave del host, quién puede ver la sala, límite de salas y limpieza |
 | `GameLoopServiceTest` | 2 | Resolución de colisiones según el umbral de distancia |
-| `AuthServiceTest` | 6 | Ingreso, perfiles, cambio de *tag* y registro de resultados |
+| `AuthServiceTest` | 11 | Invitados sin suplantación, flujo de Google, cambio de *tag* con rotación de sesión y clasificación |
+| `SecurityTokensTest` | 7 | Tokens de sesión (firma, rotación, manipulación) y verificación del ID token de Google (audiencia, emisor, firma, expiración, correo) |
+| `StompSecurityInterceptorTest` | 5 | `CONNECT` autenticado, sin publicación en `/topic`, telemetría con sesión y límite, y suscripciones por sala |
+| `ApiSecurityIntegrationTest` | 5 | La API completa con MockMvc: autorización por sala, perfiles sin correo, Google, cabeceras y CORS |
+| `LabControllerTokenTest` | 2 | `/admin/config` sin token por defecto |
 | `ProjectObservabilityTest` | 4 | Exposición de las métricas del proyecto |
 | `LabModeTest` | 7 | Fallas, latencia y capacidad del modo laboratorio |
 | `EciRaceGoApplicationTests` | 1 | Arranque del contexto de Spring |
@@ -320,7 +395,7 @@ python scripts/lab.py fault               # simula una falla de 30 s (modo labor
 | Pipeline | Disparador | Qué hace |
 |---|---|---|
 | `.github/workflows/ci.yml` | push / PR a `main` | Compila y ejecuta las pruebas con JDK 21 |
-| `.github/workflows/cd.yml` | push a `main` / rama del sprint | Ejecuta las pruebas y publica la imagen en **GHCR** (`ghcr.io/cristian-aristi/ecirace-go`, etiquetas `sha-<commit>` y `latest`) |
+| `.github/workflows/cd.yml` | push a `main` | Ejecuta las pruebas y publica la imagen en **GHCR** (`ghcr.io/cristian-aristi/ecirace-go`, etiquetas `sha-<commit>` y `latest`). Las acciones están fijadas por SHA |
 | `azure-pipelines.yml` | push a `main` | Compilación, pruebas y construcción de la imagen en Azure DevOps |
 
 ## ☁️ Despliegue en AWS
@@ -347,7 +422,7 @@ flowchart LR
 | **Una sola instancia** | Las salas, el game loop y el broker STOMP viven en memoria. |
 | **PostgreSQL en contenedor** | Evita el costo fijo de RDS. Vive en una red interna sin puertos expuestos. Su clave se genera dentro de la instancia y nunca sale de ella. |
 | **Sin puerto 22** | Se administra por SSM (`LabInstanceProfile`). Además, IMDSv2 es obligatorio y el disco está cifrado. |
-| **Actuator cerrado** | Solo se exponen `/actuator/health` y `/actuator/prometheus`, este último con usuario y contraseña. `/admin` y `/h2-console` responden 404. |
+| **Actuator cerrado** | Actuator escucha en el puerto 8081, que no se publica. Caddy solo reenvía `/actuator/health` y `/actuator/prometheus`, este último con usuario y contraseña. `/admin` y `/h2-console` responden 404, y las rutas con `;` responden 400. |
 
 El CD (`.github/workflows/cd.yml`) solo publica la imagen. Learner Lab entrega **credenciales temporales**, así que el despliegue se hace desde el equipo con `scripts/aws.py`.
 
@@ -374,8 +449,10 @@ El CD (`.github/workflows/cd.yml`) solo publica la imagen. Learner Lab entrega *
 
 ```bash
 python scripts/aws.py check       # debe mostrar la cuenta y la región us-east-1
-python scripts/aws.py deploy      # crea todo, imprime la URL y espera "Servidor UP"
+python scripts/aws.py deploy --google-client-id <ID>.apps.googleusercontent.com   # crea todo, imprime la URL y espera "Servidor UP"
 ```
+
+`--google-client-id` se recuerda en `deploy/aws/.aws-deploy.json`. Otras opciones de `deploy`: `--rate-limit off|on` (apágalo solo mientras corres `aws.py k6`, porque todos los usuarios virtuales salen de tu IP) y `--demo-tools on|off` (simulador de ruta y **Simular victoria** para una demo en el salón).
 
 ### Dominio propio (opcional)
 
@@ -414,7 +491,7 @@ En cada sesión nueva: **Start Lab → actualizar credenciales → `up`**. Al te
 
 > 💡 Usa `up` antes de una demo y **siempre `down` al terminar**. Learner Lab también detiene la instancia al cerrar la sesión, pero lo que quede encendido consume créditos del laboratorio.
 >
-> 🔐 El archivo `deploy/aws/.aws-deploy.json` guarda la contraseña de métricas. Está en `.gitignore`: compártelo solo por privado con quien vaya a operar el despliegue.
+> 🔐 El archivo `deploy/aws/.aws-deploy.json` guarda la contraseña de métricas. Está en `.gitignore`: compártelo solo por privado con quien vaya a operar el despliegue. A la instancia solo viaja el hash bcrypt de esa contraseña. El secreto de las sesiones y la clave de PostgreSQL se generan dentro de la instancia y nunca salen de ella.
 
 ## 📅 Gestión del proyecto (Sprints)
 

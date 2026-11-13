@@ -172,9 +172,10 @@ public class RoomServiceTest {
     @Test
     @DisplayName("Hay un máximo de salas simultáneas")
     void roomLimit() {
-        for (int i = 0; i < RoomService.MAX_ROOMS - 1; i++) {
-            roomService.createRoom(null, null);
+        RoomService limited = new RoomServiceImpl(5); // CAMPUS-ECI + 4
+        for (int i = 0; i < 4; i++) {
+            limited.createRoom(null, null);
         }
-        assertThrows(IllegalStateException.class, () -> roomService.createRoom(null, null));
+        assertThrows(IllegalStateException.class, () -> limited.createRoom(null, null));
     }
 }

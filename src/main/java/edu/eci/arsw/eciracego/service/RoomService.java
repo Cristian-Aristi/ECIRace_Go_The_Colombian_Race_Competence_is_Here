@@ -11,15 +11,12 @@ import java.util.Optional;
 
 public interface RoomService {
 
-    /** Máximo de salas simultáneas en memoria (evita agotar la memoria creando salas en bucle). */
-    int MAX_ROOMS = 200;
-
     /**
      * Crea una nueva sala de competición.
      * @param hostUser Piloto autenticado que la crea, o null si la crea el centro de control sin sesión.
      * @param preferredCode Código deseado (ya validado) o null para autogenerar.
      * @return La sala creada, o vacío si el código ya está en uso.
-     * @throws IllegalStateException si se alcanzó {@link #MAX_ROOMS}.
+     * @throws IllegalStateException si se alcanzó el máximo de salas (ecirace.rooms.max).
      */
     Optional<Room> createRoom(String hostUser, String preferredCode);
 

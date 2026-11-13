@@ -34,9 +34,10 @@ fi
 # --- 2. Secretos persistentes: se generan una sola vez y nunca salen de la instancia ---
 umask 077
 install -d -m 700 data data/postgres data/caddy
-if [ ! -s data/secrets.env ]; then
-  echo "DB_PASSWORD=$(openssl rand -hex 24)" > data/secrets.env
-fi
+touch data/secrets.env
+grep -q '^DB_PASSWORD=' data/secrets.env || echo "DB_PASSWORD=$(openssl rand -hex 24)" >> data/secrets.env
+# Secreto de los tokens de sesión: si cambia, todos los pilotos deben volver a iniciar sesión
+grep -q '^ECIRACE_TOKEN_SECRET=' data/secrets.env || echo "ECIRACE_TOKEN_SECRET=$(openssl rand -hex 32)" >> data/secrets.env
 
 # --- 3. Dominio público (IMDSv2) ------------------------------------------------------
 imds() {
@@ -46,21 +47,29 @@ imds() {
   curl -fsS -H "X-aws-ec2-metadata-token: $token" "http://169.254.169.254/latest/meta-data/$1"
 }
 # shellcheck disable=SC1091
-source deploy.env   # APP_IMAGE, METRICS_PASSWORD y CUSTOM_DOMAIN, escritos por el UserData
+source deploy.env   # APP_IMAGE, METRICS_HASH_B64, CUSTOM_DOMAIN, GOOGLE_CLIENT_ID, RATE_LIMIT_ENABLED y DEMO_TOOLS (UserData)
 PUBLIC_IP=$(imds public-ipv4)
 SSLIP_DOMAIN="${PUBLIC_IP//./-}.sslip.io"
 # Caddy atiende (y certifica) el dominio propio, si existe, y siempre el de sslip.io como respaldo
 if [ -n "${CUSTOM_DOMAIN:-}" ]; then
   DOMAIN="$CUSTOM_DOMAIN $SSLIP_DOMAIN"
   MAIN_DOMAIN="$CUSTOM_DOMAIN"
+  ALLOWED_ORIGINS="https://$CUSTOM_DOMAIN,https://$SSLIP_DOMAIN"
 else
   DOMAIN="$SSLIP_DOMAIN"
   MAIN_DOMAIN="$SSLIP_DOMAIN"
+  ALLOWED_ORIGINS="https://$SSLIP_DOMAIN"
 fi
 echo "Dominios: $DOMAIN"
 
-# --- 4. Usuario de métricas (contraseña en bcrypt, nunca en texto plano en Caddy) -----
-HASH=$(docker run --rm "$CADDY_IMAGE" caddy hash-password --plaintext "$METRICS_PASSWORD")
+# --- 4. Usuario de métricas -------------------------------------------------------------
+# La contraseña nunca llega a la instancia: scripts/aws.py envía solo su hash bcrypt (en base64),
+# así que leer el UserData de la EC2 no revela la clave.
+HASH=$(printf '%s' "$METRICS_HASH_B64" | base64 -d)
+case "$HASH" in
+  '$2a$'*|'$2b$'*|'$2y$'*) ;;
+  *) echo "METRICS_HASH_B64 no es un hash bcrypt válido" >&2; exit 1 ;;
+esac
 printf 'basic_auth {\n\tmetrics %s\n}\n' "$HASH" > metrics_auth.caddy
 
 # --- 5. Variables para Compose ----------------------------------------------------------
@@ -68,6 +77,10 @@ printf 'basic_auth {\n\tmetrics %s\n}\n' "$HASH" > metrics_auth.caddy
   echo "APP_IMAGE=$APP_IMAGE"
   cat data/secrets.env
   echo "DOMAIN=\"$DOMAIN\""
+  echo "ALLOWED_ORIGINS=$ALLOWED_ORIGINS"
+  echo "GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}"
+  echo "RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-true}"
+  echo "DEMO_TOOLS=${DEMO_TOOLS:-false}"
 } > .env
 
 # --- 6. Levantar (siempre con la última imagen) -----------------------------------------
