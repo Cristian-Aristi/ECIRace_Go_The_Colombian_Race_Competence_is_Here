@@ -1,8 +1,11 @@
 # ECIRace GO en AWS (EC2). Lo ejecuta deploy/aws/bootstrap.sh en cada arranque de la instancia.
 # Variables (las escribe bootstrap.sh en /opt/ecirace/.env, permisos 600):
 #   APP_IMAGE    imagen del servidor publicada en GHCR
-#   DB_PASSWORD  generada en la propia instancia la primera vez; nunca sale de ella
-#   DOMAIN       <ip-pública>.sslip.io, para que Caddy obtenga el certificado TLS
+#   DB_PASSWORD           generada en la propia instancia la primera vez; nunca sale de ella
+#   ECIRACE_TOKEN_SECRET  secreto de los tokens de sesión, también generado en la instancia
+#   GOOGLE_CLIENT_ID      client ID web de Google Identity Services (no es secreto)
+#   ALLOWED_ORIGINS       https://<dominio> (CORS y WebSocket)
+#   DOMAIN                <ip-pública>.sslip.io, para que Caddy obtenga el certificado TLS
 name: ecirace
 
 x-defaults: &defaults
@@ -45,8 +48,14 @@ services:
       DB_DRIVER: org.postgresql.Driver
       DB_USER: ecirace
       DB_PASSWORD: ${DB_PASSWORD}
+      ECIRACE_TOKEN_SECRET: ${ECIRACE_TOKEN_SECRET:?ECIRACE_TOKEN_SECRET no definida}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      ECIRACE_ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      ECIRACE_RATELIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      ECIRACE_DEMO_TOOLS: ${DEMO_TOOLS:-false}
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health/readiness | grep -q UP"]
+      # Actuator escucha en 8081 (perfil cloud), un puerto que no se publica
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/actuator/health/readiness | grep -q UP"]
       interval: 15s
       timeout: 5s
       start_period: 90s

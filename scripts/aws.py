@@ -43,8 +43,8 @@ def save_cfg(cfg):
 def _shown(arg):
     """Oculta la clave de metricas y resume los archivos empaquetados al imprimir comandos."""
     key, _, value = arg.partition('=')
-    if key == 'MetricsPassword':
-        return 'MetricsPassword=***'
+    if key in ('MetricsPassword', 'MetricsPasswordHash'):
+        return f'{key}=***'
     if key in ('ComposeFile', 'Caddyfile', 'BootstrapScript'):
         return f'{key}=<{len(value)} B gzip+base64>'
     return arg
@@ -90,6 +90,48 @@ def packed(name):
 def new_metrics_password():
     alphabet = string.ascii_letters + string.digits
     return ''.join(secrets.choice(alphabet) for _ in range(32))
+
+
+CADDY_IMAGE = 'caddy:2.10-alpine'
+
+
+def bcrypt_hash(password):
+    """Hash bcrypt de la clave de metricas. A la instancia solo viaja este hash (no la clave)."""
+    try:
+        import bcrypt  # pip install bcrypt (opcional)
+        return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12)).decode()
+    except ImportError:
+        pass
+    if shutil.which('docker'):
+        r = subprocess.run(['docker', 'run', '--rm', CADDY_IMAGE, 'caddy', 'hash-password', '--plaintext', password],
+                           text=True, capture_output=True)
+        if r.returncode == 0 and r.stdout.strip().startswith('$2'):
+            return r.stdout.strip()
+    raise SystemExit('No se pudo calcular el hash bcrypt de la clave de metricas.\n'
+                     'Instale el paquete "bcrypt" (pip install bcrypt) o tenga Docker funcionando y repita.')
+
+
+def ensure_local_env():
+    """El docker-compose local exige secretos en .env (los genera scripts/lab.py); aqui igual por si no existe."""
+    env_file = ROOT / '.env'
+    values = {}
+    if env_file.exists():
+        for line in env_file.read_text(encoding='utf-8').splitlines():
+            if '=' in line and not line.lstrip().startswith('#'):
+                k, v = line.split('=', 1)
+                values[k.strip()] = v.strip()
+    changed = False
+    for key, size in (('ECIRACE_LAB_TOKEN', 24), ('GRAFANA_ADMIN_PASSWORD', 18), ('ECIRACE_TOKEN_SECRET', 48)):
+        if not values.get(key):
+            values[key] = secrets.token_urlsafe(size)
+            changed = True
+    if changed:
+        env_file.write_text(''.join(f'{k}={v}\n' for k, v in values.items()), encoding='utf-8')
+        try:
+            env_file.chmod(0o600)
+        except OSError:
+            pass
+    return values
 
 
 def stack(cfg):
@@ -215,9 +257,17 @@ def cmd_deploy(a, cfg):
         cfg['domain'] = a.domain.strip().lower()
     if cfg.get('domain'):
         check_dns(cfg, cfg['domain'])
+    if a.google_client_id is not None:  # --google-client-id "" desactiva el login con Google
+        cfg['google_client_id'] = a.google_client_id.strip()
+    if a.rate_limit:
+        cfg['rate_limit'] = a.rate_limit
+    if a.demo_tools:
+        cfg['demo_tools'] = a.demo_tools
     cfg.setdefault('image', 'ghcr.io/cristian-aristi/ecirace-go:latest')
     cfg.setdefault('instance_type', 't3.small')
-    cfg.setdefault('metrics_password', new_metrics_password())
+    if 'metrics_password' not in cfg or 'metrics_hash' not in cfg:
+        cfg.setdefault('metrics_password', new_metrics_password())
+        cfg['metrics_hash'] = bcrypt_hash(cfg['metrics_password'])
     if 'ami' not in cfg:  # se fija una vez: una AMI nueva reemplazaria la instancia y sus datos
         cfg['ami'] = aws(cfg, 'ssm', 'get-parameter', '--name', AMI_PARAM, quiet=True)['Parameter']['Value']
     if 'subnet' not in cfg:
@@ -233,7 +283,10 @@ def cmd_deploy(a, cfg):
 
     params = [f'VpcId={cfg["vpc"]}', f'SubnetId={cfg["subnet"]}', f'AmiId={cfg["ami"]}',
               f'InstanceType={cfg["instance_type"]}', f'AppImage={cfg["image"]}',
-              f'MetricsPassword={cfg["metrics_password"]}',
+              f'MetricsPasswordHash={base64.b64encode(cfg["metrics_hash"].encode()).decode()}',
+              f'GoogleClientId={cfg.get("google_client_id", "")}',
+              f'RateLimitEnabled={"false" if cfg.get("rate_limit") == "off" else "true"}',
+              f'DemoTools={"true" if cfg.get("demo_tools") == "on" else "false"}',
               f'ComposeFile={packed("docker-compose.yml")}', f'Caddyfile={packed("Caddyfile")}',
               f'BootstrapScript={packed("bootstrap.sh")}', f'SshCidr={a.ssh_cidr or ""}',
               f'KeyName={a.key_name or ""}', f'InstanceProfileName={a.instance_profile}',
@@ -322,6 +375,7 @@ def cmd_monitor(a, cfg):
         return
     if 'metrics_password' not in cfg:
         raise SystemExit('Falta la clave de metricas: copie deploy/aws/.aws-deploy.json de quien hizo el deploy.')
+    ensure_local_env()
     url = cfg.get('url') or outputs(cfg)['Url']
     host = url.removeprefix('https://')
     target = ROOT / 'monitoring' / 'prometheus-cloud.yml'
@@ -339,6 +393,10 @@ def cmd_monitor(a, cfg):
 
 
 def cmd_k6(a, cfg):
+    ensure_local_env()
+    if cfg.get('rate_limit') != 'off':
+        print('Aviso: el servidor limita las peticiones por IP y todos los usuarios virtuales de k6 salen de este equipo.\n'
+              'Para una prueba de carga: python scripts/aws.py deploy --rate-limit off  (y despues --rate-limit on).')
     url = cfg.get('url') or outputs(cfg)['Url']
     name = f'aws-{a.profile}'
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
@@ -381,6 +439,9 @@ def main():
     d.add_argument('--key-name', help='par de llaves para SSH (en Learner Lab: vockey)')
     d.add_argument('--instance-profile', default='LabInstanceProfile', help='perfil IAM existente ("" = ninguno)')
     d.add_argument('--domain', help='dominio propio con registro A hacia la IP elastica ("" = solo sslip.io)')
+    d.add_argument('--google-client-id', help='client ID web de Google Identity Services ("" = sin login con Google)')
+    d.add_argument('--rate-limit', choices=['on', 'off'], help='limite de peticiones por IP (off solo para pruebas k6)')
+    d.add_argument('--demo-tools', choices=['on', 'off'], help='simulador de ruta y "simular victoria" en el corredor')
     for name in ('check', 'up', 'down', 'status', 'release', 'destroy'):
         sub.add_parser(name)
     lg = sub.add_parser('logs')

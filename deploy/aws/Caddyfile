@@ -11,28 +11,37 @@
 	encode zstd gzip
 
 	header {
-		Strict-Transport-Security "max-age=31536000"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "geolocation=(self), camera=(), microphone=()"
 		-Server
+		# La Content-Security-Policy la envía la aplicación (SecurityHeadersFilter)
 	}
 
-	# Salud: la usan scripts/aws.py y la sonda de disponibilidad
+	# Rutas con ";" (parámetros de ruta): Tomcat los ignora y Caddy no, así que "/actuator;x/prometheus"
+	# podría esquivar las reglas de abajo. El juego nunca las usa: se rechazan.
+	@pathparams path_regexp pp ;
+	handle @pathparams {
+		respond 400
+	}
+
+	# Salud: la usan scripts/aws.py y la sonda de disponibilidad.
+	# Actuator vive en el puerto 8081 (perfil cloud), que solo alcanza Caddy por la red interna.
 	@health path /actuator/health /actuator/health/*
 	handle @health {
-		reverse_proxy app:8080
+		reverse_proxy app:8081
 	}
 
 	# Métricas para Prometheus: protegidas con usuario y contraseña (bcrypt)
 	@metrics path /actuator/prometheus
 	handle @metrics {
 		import /etc/caddy/metrics_auth.caddy
-		reverse_proxy app:8080
+		reverse_proxy app:8081
 	}
 
-	# Todo lo administrativo queda fuera de internet
+	# Todo lo administrativo queda fuera de internet (además, en 8080 ya no existe /actuator)
 	@private path /actuator /actuator/* /admin /admin/* /h2-console /h2-console/*
 	handle @private {
 		respond 404

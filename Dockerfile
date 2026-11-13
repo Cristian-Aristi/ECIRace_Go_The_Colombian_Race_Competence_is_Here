@@ -17,10 +17,14 @@ RUN mvn clean package -DskipTests
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 
-# Copiar el artefacto JAR generado
-COPY --from=builder /app/target/ecirace-go-0.0.1-SNAPSHOT.jar app.jar
+# Usuario sin privilegios: si alguien llegara a ejecutar código en el servidor, no sería root
+RUN addgroup -S ecirace && adduser -S -G ecirace -H -s /sbin/nologin ecirace
 
-# Puerto de WebSockets y HTTP
+# Copiar el artefacto JAR generado (solo lectura para el usuario de la aplicación)
+COPY --from=builder --chown=root:root /app/target/ecirace-go-0.0.1-SNAPSHOT.jar app.jar
+USER ecirace
+
+# Puerto de WebSockets y HTTP (8081: Actuator en el perfil cloud, no se publica)
 EXPOSE 8080
 
 # Comando de arranque autoritativo del servidor central

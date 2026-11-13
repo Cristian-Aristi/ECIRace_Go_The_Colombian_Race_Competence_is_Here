@@ -10,10 +10,22 @@ services:
       dockerfile: Dockerfile
     container_name: ecirace-central-server
     ports:
-      - "8080:8080"
+      # Solo en este equipo: /admin/config (modo laboratorio) no debe quedar expuesto a la red local.
+      # Para probar con celulares use un túnel HTTPS (ngrok) hacia localhost:8080 y defina
+      # ECIRACE_ALLOWED_ORIGINS con la URL del túnel en el archivo .env.
+      - "127.0.0.1:8080:8080"
     environment:
-      - SPRING_PROFILES_ACTIVE=prod
-      - ECIRACE_LAB_ENABLED=true   # NUEVO: habilita /admin/config (falla, espera y cupos del laboratorio)
+      - ECIRACE_LAB_ENABLED=true   # habilita /admin/config (falla, espera y cupos del laboratorio)
+      # Valores aleatorios que genera "python scripts/lab.py" en .env (archivo local, fuera de git)
+      - "ECIRACE_LAB_TOKEN=${ECIRACE_LAB_TOKEN:?Ejecute primero python scripts/lab.py up}"
+      - ECIRACE_TOKEN_SECRET=${ECIRACE_TOKEN_SECRET:-}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - ECIRACE_ALLOWED_ORIGINS=${ECIRACE_ALLOWED_ORIGINS:-}
+      # Pruebas de carga locales: sin límite por IP (todos los usuarios virtuales de k6 salen de la misma IP)
+      - ECIRACE_RATELIMIT_ENABLED=false
+      - ECIRACE_ROOMS_MAX=100000
+      # Simulador de ruta y "simular victoria" para probar sin salir a correr
+      - ECIRACE_DEMO_TOOLS=true
     restart: unless-stopped
 
   probe:
@@ -36,7 +48,7 @@ services:
     image: grafana/grafana:12.2.0
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: arsw-lab-2026
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?Ejecute primero python scripts/lab.py up}"
       GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       - ./monitoring/grafana:/etc/grafana/provisioning:ro

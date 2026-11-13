@@ -5,12 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="theme-color" content="#2a6fe0">
     <title>ECIRace GO · Garaje</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
-    <script>
-        /* Fondo elegido en Ajustes: se aplica antes de pintar para que no parpadee */
-        try { if (localStorage.getItem('ecirace_bg') !== 'imagen') document.documentElement.classList.add('bg-pista'); }
-        catch (e) { document.documentElement.classList.add('bg-pista'); }
-    </script>
+    <script src="vendor/stomp-2.3.3/stomp.min.js"></script>
+    <script src="js/theme-boot.js"></script>
     <link rel="preload" href="fonts/pixelify-sans-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="fonts/vt323-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="css/game.css?v=6">
@@ -84,13 +80,13 @@
         <div class="g-carousel">
             <button type="button" class="g-arrow g-arrow--left" id="btnPrevCar" aria-label="Carro anterior"></button>
             <div class="g-cars" role="radiogroup" aria-label="Vehículo">
-                <button type="button" class="vehicle-btn" id="btn-RENAULT_4" onclick="selectVehicle('RENAULT_4')">
+                <button type="button" class="vehicle-btn" id="btn-RENAULT_4" data-vehicle="RENAULT_4">
                     <img src="img/renault.png?v=2" alt=""><span>Renault 4</span>
                 </button>
-                <button type="button" class="vehicle-btn" id="btn-CHEVROLET_SPARK" onclick="selectVehicle('CHEVROLET_SPARK')">
+                <button type="button" class="vehicle-btn" id="btn-CHEVROLET_SPARK" data-vehicle="CHEVROLET_SPARK">
                     <img src="img/spark.png?v=2" alt=""><span>Spark GT</span>
                 </button>
-                <button type="button" class="vehicle-btn" id="btn-MAZDA_323" onclick="selectVehicle('MAZDA_323')">
+                <button type="button" class="vehicle-btn" id="btn-MAZDA_323" data-vehicle="MAZDA_323">
                     <img src="img/mazda.png?v=2" alt=""><span>Mazda 323</span>
                 </button>
             </div>
@@ -170,7 +166,7 @@
 
         <span class="g-label" style="margin-top: 14px;">SALAS ACTIVAS EN EL SERVIDOR (TOCA PARA SELECCIONAR):</span>
         <div id="activeRoomsContainer" class="g-rooms">
-            <span class="room-pill active" data-code="CAMPUS-ECI" onclick="selectRoom('CAMPUS-ECI')">
+            <span class="room-pill active" data-code="CAMPUS-ECI">
                 <span class="g-ico" data-icon="wifi" style="width:20px;height:18px;"></span>
                 <strong>CAMPUS-ECI</strong>
             </span>
@@ -266,6 +262,7 @@
 </div>
 
 <script src="js/game-ui.js?v=4"></script>
+<script src="js/session.js?v=1"></script>
 <script src="js/lobby.js?v=6"></script>
 </body>
 </html>
