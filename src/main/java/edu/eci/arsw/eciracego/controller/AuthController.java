@@ -1,94 +1,112 @@
 package edu.eci.arsw.eciracego.controller;
 
 import edu.eci.arsw.eciracego.dto.AuthRequest;
+import edu.eci.arsw.eciracego.dto.MyProfile;
+import edu.eci.arsw.eciracego.dto.PublicProfile;
+import edu.eci.arsw.eciracego.dto.SessionResponse;
 import edu.eci.arsw.eciracego.model.UserProfile;
+import edu.eci.arsw.eciracego.security.ApiException;
+import edu.eci.arsw.eciracego.security.AuthenticatedUser;
+import edu.eci.arsw.eciracego.security.GoogleIdentity;
+import edu.eci.arsw.eciracego.security.GoogleTokenVerifier;
+import edu.eci.arsw.eciracego.security.TokenService;
 import edu.eci.arsw.eciracego.service.AuthService;
-import org.springframework.beans.factory.annotation.Autowired;
+import edu.eci.arsw.eciracego.service.RoomService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+import java.util.Map;
+
 /**
- * Controlador REST para operaciones de autenticación y consulta de perfil.
- * Cumple con SRP (Single Responsibility) y DIP (inyección de AuthService).
+ * Autenticación y perfiles de piloto.
+ * <ul>
+ *   <li>Google: el ID token se verifica en el servidor ({@link GoogleTokenVerifier}).</li>
+ *   <li>Invitado: crea un piloto NUEVO; un tag existente no se puede reclamar.</li>
+ *   <li>Ambos devuelven un token de sesión que el front envía como "Authorization: Bearer".</li>
+ * </ul>
  */
 @RestController
 @RequestMapping("/api/auth")
-@CrossOrigin(origins = "*")
 public class AuthController {
 
     private final AuthService authService;
+    private final TokenService tokenService;
+    private final GoogleTokenVerifier googleVerifier;
+    private final RoomService roomService;
 
-    @Autowired
-    public AuthController(AuthService authService) {
+    public AuthController(AuthService authService, TokenService tokenService,
+                          GoogleTokenVerifier googleVerifier, RoomService roomService) {
         this.authService = authService;
+        this.tokenService = tokenService;
+        this.googleVerifier = googleVerifier;
+        this.roomService = roomService;
     }
 
-    /**
-     * Endpoint para autenticación de Google Identity Services.
-     */
+    /** Configuración pública del login (el client ID de Google no es secreto). */
+    @GetMapping("/config")
+    public Map<String, Object> config() {
+        return Map.of("googleEnabled", googleVerifier.isEnabled(), "googleClientId", googleVerifier.getClientId());
+    }
+
     @PostMapping("/google")
-    public ResponseEntity<UserProfile> loginWithGoogle(@RequestBody AuthRequest request) {
+    public SessionResponse loginWithGoogle(@RequestBody(required = false) AuthRequest request) {
         if (request == null) {
-            return ResponseEntity.badRequest().build();
+            throw ApiException.badRequest("Falta el token de Google.");
         }
-        UserProfile profile = authService.authenticateGoogle(request);
-        return ResponseEntity.ok(profile);
+        GoogleIdentity identity = googleVerifier.verify(request.getIdToken());
+        return session(authService.loginWithGoogle(identity, request.getUsername()));
     }
 
-    /**
-     * Endpoint para autenticación rápida / modo de pruebas local sin OAuth.
-     */
     @PostMapping("/guest")
-    public ResponseEntity<UserProfile> loginGuest(@RequestBody(required = false) AuthRequest request) {
+    public ResponseEntity<SessionResponse> loginGuest(@RequestBody(required = false) AuthRequest request) {
         String username = (request != null) ? request.getUsername() : null;
-        UserProfile profile = authService.authenticateGuest(username);
-        return ResponseEntity.ok(profile);
+        return ResponseEntity.status(HttpStatus.CREATED).body(session(authService.registerGuest(username)));
     }
 
-    /**
-     * Consulta el perfil y estadísticas del corredor por username.
-     */
+    /** Perfil completo del piloto autenticado (incluye su correo). */
+    @GetMapping("/me")
+    public MyProfile me(HttpServletRequest http) {
+        String user = AuthenticatedUser.require(http);
+        return authService.getProfile(user).map(MyProfile::of).orElseThrow(ApiException::unauthorized);
+    }
+
+    /** Cierra la sesión en TODOS los dispositivos del piloto. */
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout(HttpServletRequest http) {
+        authService.logout(AuthenticatedUser.require(http));
+        return ResponseEntity.noContent().build();
+    }
+
+    /** Perfil público (sin correo) de cualquier piloto. */
     @GetMapping("/profile/{username}")
-    public ResponseEntity<UserProfile> getProfile(@PathVariable String username) {
+    public ResponseEntity<PublicProfile> getProfile(@PathVariable String username) {
         return authService.getProfile(username)
+                .map(PublicProfile::of)
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND).build());
     }
 
-    /**
-     * Actualiza el tag o nombre del piloto.
-     */
+    /** Cambia el tag del piloto AUTENTICADO. Devuelve un token nuevo (los anteriores dejan de servir). */
     @PutMapping("/username")
-    public ResponseEntity<UserProfile> updateUsername(@RequestBody java.util.Map<String, String> body) {
-        String current = body.get("currentUsername");
-        String next = body.get("newUsername");
-        if (current == null || next == null || next.trim().isEmpty()) {
-            return ResponseEntity.badRequest().build();
+    public SessionResponse updateUsername(@RequestBody(required = false) Map<String, String> body, HttpServletRequest http) {
+        String current = AuthenticatedUser.require(http);
+        String next = body != null ? body.get("newUsername") : null;
+        if (roomService.isInActiveRoom(current)) {
+            throw new ApiException(HttpStatus.CONFLICT, "IN_ROOM", "Sal de la sala de espera antes de cambiar tu tag.");
         }
-        UserProfile updated = authService.updateUsername(current, next);
-        return ResponseEntity.ok(updated);
+        return session(authService.updateUsername(current, next));
     }
 
-    /**
-     * Tabla de clasificación: pilotos con más victorias (por defecto los 10 primeros).
-     */
+    /** Clasificación pública: pilotos con más victorias (sin correos). */
     @GetMapping("/leaderboard")
-    public ResponseEntity<java.util.List<UserProfile>> leaderboard(@RequestParam(defaultValue = "10") int limit) {
-        return ResponseEntity.ok(authService.getLeaderboard(limit));
+    public List<PublicProfile> leaderboard(@RequestParam(defaultValue = "10") int limit) {
+        return authService.getLeaderboard(limit).stream().map(PublicProfile::of).toList();
     }
 
-    /**
-     * Registra una carrera finalizada para actualizar estadísticas en vivo.
-     */
-    @PostMapping("/race-result")
-    public ResponseEntity<UserProfile> recordRace(@RequestBody java.util.Map<String, Object> body) {
-        String username = (String) body.get("username");
-        boolean won = Boolean.TRUE.equals(body.get("won"));
-        UserProfile updated = authService.recordRace(username, won);
-        if (updated != null) {
-            return ResponseEntity.ok(updated);
-        }
-        return ResponseEntity.notFound().build();
+    private SessionResponse session(UserProfile profile) {
+        return new SessionResponse(tokenService.issue(profile), MyProfile.of(profile));
     }
 }

@@ -1,6 +1,7 @@
 package edu.eci.arsw.eciracego.model;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 public class Ubication {
     private String runnerId;
@@ -11,7 +12,9 @@ public class Ubication {
     private boolean suspicious = false;
     private String roomCode = "CAMPUS-ECI";
     private VehicleType vehicleType = VehicleType.RENAULT_4;
-    private String car;
+    /** Hora del SERVIDOR al recibir el paquete: el anti-trampas no confía solo en el reloj del teléfono. */
+    @JsonIgnore
+    private long receivedAt;
 
 
     public Ubication() {}
@@ -84,21 +87,27 @@ public class Ubication {
             this.vehicleType = vehicleType;
         }
     }
+    /** Siempre un valor del enum VehicleType: el texto libre que mande el cliente nunca se retransmite. */
     public String getCar() {
-        if (car != null && !car.trim().isEmpty()) {
-            return car;
-        }
-        return vehicleType != null ? vehicleType.name() : "RENAULT_4";
+        return vehicleType != null ? vehicleType.name() : VehicleType.RENAULT_4.name();
     }
 
     public void setCar(String car) {
-        this.car = car;
-        if (car != null && !car.trim().isEmpty()) {
+        if (car != null && !car.trim().isEmpty() && car.length() <= 32) {
             try {
                 this.vehicleType = VehicleType.valueOf(car.trim().toUpperCase());
             } catch (IllegalArgumentException ignored) {
             }
         }
+    }
+
+    @JsonIgnore
+    public long getReceivedAt() {
+        return receivedAt;
+    }
+
+    public void setReceivedAt(long receivedAt) {
+        this.receivedAt = receivedAt;
     }
 
 }

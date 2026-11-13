@@ -1,24 +1,27 @@
 package edu.eci.arsw.eciracego.service.impl;
 
-import edu.eci.arsw.eciracego.dto.AuthRequest;
 import edu.eci.arsw.eciracego.model.UserProfile;
 import edu.eci.arsw.eciracego.repository.UserProfileRepository;
+import edu.eci.arsw.eciracego.security.ApiException;
+import edu.eci.arsw.eciracego.security.GoogleIdentity;
+import edu.eci.arsw.eciracego.security.InputValidator;
 import edu.eci.arsw.eciracego.service.AuthService;
-import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Comparator;
+import java.security.SecureRandom;
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 @Service
 public class AuthServiceImpl implements AuthService {
 
     private static final Logger log = LoggerFactory.getLogger(AuthServiceImpl.class);
+    private static final SecureRandom RANDOM = new SecureRandom();
 
     private final UserProfileRepository userProfileRepository;
 
@@ -27,66 +30,57 @@ public class AuthServiceImpl implements AuthService {
         this.userProfileRepository = userProfileRepository;
     }
 
-    @PostConstruct
-    public void initSeedData() {
-        if (!userProfileRepository.existsById("Daniel")) {
-            userProfileRepository.save(new UserProfile("Daniel", "daniel@escuelaing.edu.co", "Daniel", "", 125, 48, 5.0));
-        }
-        if (!userProfileRepository.existsById("Cristian")) {
-            userProfileRepository.save(new UserProfile("Cristian", "cristian@escuelaing.edu.co", "Cristian", "", 125, 48, 5.0));
-        }
-        if (!userProfileRepository.existsById("Santiago")) {
-            userProfileRepository.save(new UserProfile("Santiago", "santiago@escuelaing.edu.co", "Santiago", "", 125, 48, 5.0));
-        }
-    }
-
     @Override
-    public UserProfile authenticateGoogle(AuthRequest request) {
-        String effectiveUsername = resolveUsername(request.getUsername(), request.getFullName(), request.getEmail());
-        log.info("[AuthService] Authenticating Google user: {} ({})", effectiveUsername, request.getEmail());
-
-        return userProfileRepository.findById(effectiveUsername).map(existing -> {
-            existing.setEmail(request.getEmail());
-            existing.setFullName(request.getFullName());
-            if (request.getPictureUrl() != null && !request.getPictureUrl().isBlank()) {
-                existing.setPictureUrl(request.getPictureUrl());
+    @Transactional
+    public UserProfile loginWithGoogle(GoogleIdentity identity, String requestedUsername) {
+        Optional<UserProfile> linked = userProfileRepository.findByGoogleSubject(identity.subject());
+        if (linked.isPresent()) {
+            UserProfile profile = linked.get();
+            // Datos frescos del token verificado de Google
+            profile.setEmail(identity.email());
+            profile.setFullName(identity.name());
+            profile.setPictureUrl(safePicture(identity.pictureUrl()));
+            if (profile.getSessionKey() == null) {
+                profile.rotateSessionKey();
             }
-            return userProfileRepository.save(existing);
-        }).orElseGet(() -> userProfileRepository.save(new UserProfile(
-                effectiveUsername,
-                request.getEmail(),
-                request.getFullName(),
-                request.getPictureUrl(),
-                0,
-                0,
-                0.0
-        )));
+            log.info("[AuthService] Inicio de sesión con Google: {}", profile.getUsername());
+            return userProfileRepository.save(profile);
+        }
+
+        if (requestedUsername == null || requestedUsername.isBlank()) {
+            throw new ApiException(HttpStatus.CONFLICT, "USERNAME_REQUIRED", "Elige tu tag de piloto para terminar el registro.");
+        }
+        String username = InputValidator.requireUsername(requestedUsername);
+        ensureAvailable(username);
+
+        UserProfile profile = new UserProfile(username, identity.email(), identity.name(), safePicture(identity.pictureUrl()));
+        profile.setGoogleSubject(identity.subject());
+        profile.setGuest(false);
+        profile.rotateSessionKey();
+        log.info("[AuthService] Nuevo piloto con Google: {}", username);
+        return userProfileRepository.save(profile);
     }
 
     @Override
-    public UserProfile authenticateGuest(String username) {
-        String effectiveUsername = (username != null && !username.trim().isEmpty())
-                ? username.trim()
-                : "Piloto_" + (100 + (int) (Math.random() * 900));
-
-        log.info("[AuthService] Authenticating guest racer: {}", effectiveUsername);
-
-        return userProfileRepository.findById(effectiveUsername).orElseGet(() ->
-                userProfileRepository.save(new UserProfile(
-                        effectiveUsername,
-                        effectiveUsername.toLowerCase() + "@ecirace.local",
-                        effectiveUsername,
-                        "",
-                        0,
-                        0,
-                        0.0
-                ))
-        );
+    @Transactional
+    public UserProfile registerGuest(String requestedUsername) {
+        String username;
+        if (requestedUsername == null || requestedUsername.isBlank()) {
+            username = randomGuestName();
+        } else {
+            username = InputValidator.requireUsername(requestedUsername);
+            ensureAvailable(username);
+        }
+        UserProfile profile = new UserProfile(username, null, username, "");
+        profile.setGuest(true);
+        profile.rotateSessionKey();
+        log.info("[AuthService] Nuevo piloto invitado: {}", username);
+        return userProfileRepository.save(profile);
     }
 
     @Override
     public Optional<UserProfile> getProfile(String username) {
-        if (username == null || username.trim().isEmpty()) {
+        if (username == null || username.trim().isEmpty() || username.length() > 64) {
             return Optional.empty();
         }
         return userProfileRepository.findById(username.trim());
@@ -94,63 +88,76 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public boolean exists(String username) {
-        return username != null && userProfileRepository.existsById(username.trim());
+        return username != null && userProfileRepository.existsByUsernameIgnoreCase(username.trim());
     }
 
     @Override
+    @Transactional
     public UserProfile updateUsername(String currentUsername, String newUsername) {
-        if (currentUsername == null || newUsername == null || newUsername.trim().isEmpty()) {
-            throw new IllegalArgumentException("Invalid username");
+        String next = InputValidator.requireUsername(newUsername);
+        UserProfile profile = userProfileRepository.findById(currentUsername)
+                .orElseThrow(ApiException::unauthorized);
+        if (next.equals(profile.getUsername())) {
+            return profile;
         }
-        String sanitizedNew = newUsername.trim();
-        Optional<UserProfile> existingOpt = userProfileRepository.findById(currentUsername.trim());
-        if (existingOpt.isPresent()) {
-            UserProfile profile = existingOpt.get();
-            userProfileRepository.delete(profile);
-            profile.setUsername(sanitizedNew);
-            return userProfileRepository.save(profile);
-        } else {
-            return userProfileRepository.save(new UserProfile(sanitizedNew, sanitizedNew.toLowerCase() + "@ecirace.local", sanitizedNew, ""));
+        // Solo cambia mayúsculas/minúsculas de su propio tag: no choca consigo mismo
+        if (!next.equalsIgnoreCase(profile.getUsername())) {
+            ensureAvailable(next);
         }
+        userProfileRepository.delete(profile);
+        userProfileRepository.flush();
+        UserProfile renamed = new UserProfile(next, profile.getEmail(), profile.getFullName(), profile.getPictureUrl(),
+                profile.getRacesCount(), profile.getWinsCount(), profile.getRating());
+        renamed.setGoogleSubject(profile.getGoogleSubject());
+        renamed.setGuest(profile.isGuest());
+        renamed.rotateSessionKey();
+        log.info("[AuthService] {} cambió su tag a {}", profile.getUsername(), next);
+        return userProfileRepository.save(renamed);
     }
 
     @Override
-    public UserProfile recordRace(String username, boolean won) {
-        if (username == null || username.trim().isEmpty()) {
-            return null;
-        }
-        return userProfileRepository.findById(username.trim()).map(profile -> {
-            profile.setRacesCount(profile.getRacesCount() + 1);
-            if (won) {
-                profile.setWinsCount(profile.getWinsCount() + 1);
-            }
-            double rate = (profile.getRacesCount() > 0) ? ((double) profile.getWinsCount() / profile.getRacesCount()) * 5.0 : 0.0;
-            profile.setRating(Math.round(rate * 10.0) / 10.0);
-            return userProfileRepository.save(profile);
-        }).orElse(null);
+    @Transactional
+    public void logout(String username) {
+        userProfileRepository.findById(username).ifPresent(p -> {
+            p.rotateSessionKey();
+            userProfileRepository.save(p);
+        });
     }
 
     @Override
     public List<UserProfile> getLeaderboard(int limit) {
         int max = Math.max(1, Math.min(limit, 50));
-        return userProfileRepository.findAll().stream()
-                .sorted(Comparator.comparingInt(UserProfile::getWinsCount).reversed()
-                        .thenComparing(Comparator.comparingInt(UserProfile::getRacesCount).reversed())
-                        .thenComparing(UserProfile::getUsername, String.CASE_INSENSITIVE_ORDER))
-                .limit(max)
-                .collect(Collectors.toList());
+        List<UserProfile> top = userProfileRepository.findTop50ByOrderByWinsCountDescRacesCountDescUsernameAsc();
+        return top.size() > max ? top.subList(0, max) : top;
     }
 
-    private String resolveUsername(String providedUsername, String fullName, String email) {
-        if (providedUsername != null && !providedUsername.trim().isEmpty()) {
-            return providedUsername.trim();
+    private void ensureAvailable(String username) {
+        if (userProfileRepository.existsByUsernameIgnoreCase(username)) {
+            throw new ApiException(HttpStatus.CONFLICT, "USERNAME_TAKEN", "Ese tag ya está registrado. Elige otro.");
         }
-        if (fullName != null && !fullName.trim().isEmpty()) {
-            return fullName.trim().split("\\s+")[0];
+    }
+
+    private String randomGuestName() {
+        for (int i = 0; i < 20; i++) {
+            String candidate = "Piloto_" + (1000 + RANDOM.nextInt(9000));
+            if (!userProfileRepository.existsByUsernameIgnoreCase(candidate)) {
+                return candidate;
+            }
         }
-        if (email != null && email.contains("@")) {
-            return email.substring(0, email.indexOf('@')).trim();
+        throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "Intenta de nuevo con un tag propio.");
+    }
+
+    /** Solo se guardan fotos servidas por Google (https://*.googleusercontent.com). */
+    private static String safePicture(String url) {
+        if (url == null || url.length() > 512) {
+            return "";
         }
-        return "Racer_" + (100 + (int) (Math.random() * 900));
+        try {
+            java.net.URI uri = java.net.URI.create(url);
+            String host = uri.getHost();
+            return "https".equals(uri.getScheme()) && host != null && host.endsWith(".googleusercontent.com") ? url : "";
+        } catch (IllegalArgumentException e) {
+            return "";
+        }
     }
 }

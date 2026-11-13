@@ -17,7 +17,7 @@ import java.util.Set;
  * POST /admin/config — el mismo contrato que do_POST de app/server.py del laboratorio.
  * Lo usa scripts/lab.py (fault, reset, improve, real).
  *
- * Cabecera:  X-Lab-Token: arsw-local   (configurable con ecirace.lab.token)
+ * Cabecera:  X-Lab-Token: <ECIRACE_LAB_TOKEN>  (sin valor por defecto: scripts/lab.py genera uno aleatorio en .env)
  * Cuerpo:    {"ready": true|false, "delay_ms": 0..1000, "capacity": 0..1000}   (todos opcionales)
  *
  * 403 si el token no coincide, 400 si el cuerpo es inválido, 200 con el estado resultante.
@@ -32,9 +32,13 @@ public class LabController {
     private final LabState state;
     private final String token;
 
-    public LabController(LabState state, @Value("${ecirace.lab.token:arsw-local}") String token) {
+    public LabController(LabState state, @Value("${ecirace.lab.token:}") String token) {
         this.state = state;
-        this.token = token;
+        this.token = token == null ? "" : token.trim();
+        if (this.token.length() < 16) {
+            org.slf4j.LoggerFactory.getLogger(LabController.class)
+                    .warn("ECIRACE_LAB_TOKEN vacío o corto (<16): /admin/config rechazará todas las solicitudes.");
+        }
     }
 
     @PostMapping("/config")
@@ -42,7 +46,10 @@ public class LabController {
             @RequestHeader(value = "X-Lab-Token", required = false) String header,
             @RequestBody(required = false) Map<String, Object> body) {
 
-        if (!token.equals(header)) {
+        // Comparación en tiempo constante; sin token configurado nadie puede cambiar el estado
+        if (token.length() < 16 || header == null || !java.security.MessageDigest.isEqual(
+                token.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                header.getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of());
         }
         if (body == null || !KEYS.containsAll(body.keySet())) {

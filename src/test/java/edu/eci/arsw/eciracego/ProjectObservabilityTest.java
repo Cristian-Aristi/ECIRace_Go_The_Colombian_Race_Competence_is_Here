@@ -108,7 +108,7 @@ class ProjectObservabilityTest {
     void projectGaugesReadTheCurrentGameState() {
         RoomService rooms = new RoomServiceImpl(); // trae CAMPUS-ECI en WAITING
         rooms.createRoom("Host", "SALA-1");
-        rooms.startRace("SALA-1", "Host", 4.7828, -74.0430);
+        rooms.startRace("SALA-1", "Host", null, 4.7828, -74.0430);
 
         RaceManager raceManager = Mockito.mock(RaceManager.class);
         Mockito.when(raceManager.getGlobalState())

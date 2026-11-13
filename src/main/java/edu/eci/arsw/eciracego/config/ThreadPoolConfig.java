@@ -24,7 +24,10 @@ public class ThreadPoolConfig {
         executor.setMaxPoolSize(16);
         executor.setQueueCapacity(100);
         executor.setThreadNamePrefix("RaceWorker-");
-        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        // Si la cola se llena se descarta el paquete MÁS VIEJO (una posición GPS vieja ya no sirve).
+        // Antes CallerRunsPolicy ejecutaba el trabajo en el hilo de entrada del WebSocket y un flood
+        // de telemetría bloqueaba a todos los clientes.
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.DiscardOldestPolicy());
         executor.initialize();
         return executor;
     }
