@@ -1,93 +1,68 @@
 package edu.eci.arsw.eciracego.controller;
 
-import edu.eci.arsw.eciracego.service.RaceManager;
 import edu.eci.arsw.eciracego.model.Room;
 import edu.eci.arsw.eciracego.model.Ubication;
+import edu.eci.arsw.eciracego.service.RaceManager;
 import edu.eci.arsw.eciracego.service.RoomService;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
-import org.springframework.web.bind.annotation.CrossOrigin;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.ResponseBody;
 
-import java.util.List;
+import java.security.Principal;
 import java.util.Optional;
 import java.util.concurrent.Executor;
 
 @Controller
 public class RaceController {
 
-    @Autowired
-    private RaceManager raceManager;
+    private static final Logger log = LoggerFactory.getLogger(RaceController.class);
 
-    @Autowired
-    private RoomService roomService;
+    private final RaceManager raceManager;
+    private final RoomService roomService;
+    private final Executor raceTaskExecutor;
+    private final SimpMessagingTemplate messagingTemplate;
 
-    @Autowired
-    @Qualifier("raceTaskExecutor")
-    private Executor raceTaskExecutor;
-
-    @Autowired
-    private SimpMessagingTemplate messagingTemplate;
-
-    @MessageMapping("/telemetry")
-    public void receiveCoordinate(Ubication ubication) {
-        raceTaskExecutor.execute(() -> {
-            String room = (ubication.getRoomCode() != null && !ubication.getRoomCode().trim().isEmpty())
-                    ? ubication.getRoomCode().trim().toUpperCase()
-                    : "CAMPUS-ECI";
-            ubication.setRoomCode(room);
-
-            Optional<Room> roomOpt = roomService.getRoom(room);
-            if (roomOpt.isEmpty() || roomOpt.get().getStatus() != Room.RoomStatus.IN_PROGRESS) {
-                System.out.printf("[RaceController] [%s] Telemetry rejected: Room %s does not exist or race is not in progress%n",
-                        Thread.currentThread().getName(), room);
-                return;
-            }
-
-            if (ubication.getRunnerId() == null || !roomOpt.get().getActiveRunners().contains(ubication.getRunnerId())) {
-                System.out.printf("[RaceController] [%s] Telemetry rejected: Runner %s is not registered in room %s%n",
-                        Thread.currentThread().getName(), ubication.getRunnerId(), room);
-                return;
-            }
-
-            boolean accepted = raceManager.updateUbication(ubication);
-            if (!accepted) {
-                System.out.printf("[RaceController] [%s] Telemetry discarded: Anti-cheat anomaly detected for runner %s (Speed: %.1f km/h)%n",
-                        Thread.currentThread().getName(),
-                        ubication.getRunnerId(),
-                        ubication.getSpeed());
-                return;
-            }
-
-            System.out.printf("[RaceController] [%s] Room: %s | Runner: %s | Speed: %.1f km/h | Status: ACCEPTED%n",
-                    Thread.currentThread().getName(),
-                    room,
-                    ubication.getRunnerId(),
-                    ubication.getSpeed());
-
-            // Solo al canal de la sala: antes también se enviaba a /topic/broadcast y cada
-            // dashboard recibía (y procesaba) todo dos veces, incluidas las salas ajenas.
-            messagingTemplate.convertAndSend("/topic/rooms/" + room, ubication);
-        });
+    public RaceController(RaceManager raceManager, RoomService roomService,
+                          @Qualifier("raceTaskExecutor") Executor raceTaskExecutor,
+                          SimpMessagingTemplate messagingTemplate) {
+        this.raceManager = raceManager;
+        this.roomService = roomService;
+        this.raceTaskExecutor = raceTaskExecutor;
+        this.messagingTemplate = messagingTemplate;
     }
 
     /**
-     * Última posición conocida de cada corredor de la sala. Un tablero que se abre (o se recarga)
-     * después de que el corredor empezó a transmitir, o un corredor quieto cuyo GPS ya no emite
-     * fixes nuevos, de otro modo no aparecería en el mapa hasta el siguiente paquete.
+     * Telemetría GPS. El corredor es SIEMPRE el usuario autenticado de la sesión STOMP
+     * (StompSecurityInterceptor); el "runnerId" que mande el cliente se ignora.
      */
-    @GetMapping("/api/rooms/{code}/positions")
-    @ResponseBody
-    @CrossOrigin(origins = "*")
-    public List<Ubication> roomPositions(@PathVariable("code") String code) {
-        String room = code.trim().toUpperCase();
-        return raceManager.getGlobalState().stream()
-                .filter(u -> room.equalsIgnoreCase(u.getRoomCode()))
-                .collect(java.util.stream.Collectors.toList());
+    @MessageMapping("/telemetry")
+    public void receiveCoordinate(Ubication ubication, Principal principal) {
+        if (principal == null || ubication == null) {
+            return;
+        }
+        ubication.setRunnerId(principal.getName());
+        raceTaskExecutor.execute(() -> process(ubication));
+    }
+
+    void process(Ubication ubication) {
+        String room = ubication.getRoomCode();
+        Optional<Room> roomOpt = roomService.getRoom(room);
+        if (roomOpt.isEmpty() || roomOpt.get().getStatus() != Room.RoomStatus.IN_PROGRESS) {
+            log.debug("Telemetría rechazada: la sala {} no existe o no está en carrera", room);
+            return;
+        }
+        if (!roomOpt.get().isMember(ubication.getRunnerId())) {
+            log.debug("Telemetría rechazada: {} no está inscrito en {}", ubication.getRunnerId(), room);
+            return;
+        }
+        if (!raceManager.updateUbication(ubication)) {
+            log.debug("Telemetría descartada para {} ({} km/h)", ubication.getRunnerId(), ubication.getSpeed());
+            return;
+        }
+        // Solo al canal de la sala (antes también se enviaba a /topic/broadcast)
+        messagingTemplate.convertAndSend("/topic/rooms/" + roomOpt.get().getRoomCode(), ubication);
     }
 }
