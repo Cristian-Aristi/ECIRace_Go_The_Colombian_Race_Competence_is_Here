@@ -19,7 +19,7 @@ services:
       # Valores aleatorios que genera "python scripts/lab.py" en .env (archivo local, fuera de git)
       - "ECIRACE_LAB_TOKEN=${ECIRACE_LAB_TOKEN:?Ejecute primero python scripts/lab.py up}"
       - ECIRACE_TOKEN_SECRET=${ECIRACE_TOKEN_SECRET:-}
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-126689776035-479nk37sploq2e5i6tb7arip36aps71o.apps.googleusercontent.com}
       - ECIRACE_ALLOWED_ORIGINS=${ECIRACE_ALLOWED_ORIGINS:-}
       # Pruebas de carga locales: sin límite por IP (todos los usuarios virtuales de k6 salen de la misma IP)
       - ECIRACE_RATELIMIT_ENABLED=false

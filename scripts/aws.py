@@ -93,6 +93,8 @@ def new_metrics_password():
 
 
 CADDY_IMAGE = 'caddy:2.10-alpine'
+# Client ID web de Google Identity Services del proyecto (no es secreto)
+DEFAULT_GOOGLE_CLIENT_ID = '126689776035-479nk37sploq2e5i6tb7arip36aps71o.apps.googleusercontent.com'
 
 
 def bcrypt_hash(password):
@@ -263,6 +265,7 @@ def cmd_deploy(a, cfg):
         cfg['rate_limit'] = a.rate_limit
     if a.demo_tools:
         cfg['demo_tools'] = a.demo_tools
+    cfg.setdefault('google_client_id', DEFAULT_GOOGLE_CLIENT_ID)
     cfg.setdefault('image', 'ghcr.io/cristian-aristi/ecirace-go:latest')
     cfg.setdefault('instance_type', 't3.small')
     if 'metrics_password' not in cfg or 'metrics_hash' not in cfg:
@@ -439,7 +442,7 @@ def main():
     d.add_argument('--key-name', help='par de llaves para SSH (en Learner Lab: vockey)')
     d.add_argument('--instance-profile', default='LabInstanceProfile', help='perfil IAM existente ("" = ninguno)')
     d.add_argument('--domain', help='dominio propio con registro A hacia la IP elastica ("" = solo sslip.io)')
-    d.add_argument('--google-client-id', help='client ID web de Google Identity Services ("" = sin login con Google)')
+    d.add_argument('--google-client-id', help='client ID web de Google (por defecto el del proyecto; "" = sin login con Google)')
     d.add_argument('--rate-limit', choices=['on', 'off'], help='limite de peticiones por IP (off solo para pruebas k6)')
     d.add_argument('--demo-tools', choices=['on', 'off'], help='simulador de ruta y "simular victoria" en el corredor')
     for name in ('check', 'up', 'down', 'status', 'release', 'destroy'):
