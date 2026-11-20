@@ -32,6 +32,18 @@ public class RaceManager {
      * con mandarlo dentro de la meta para ganar al instante (auditoría Sprint 9, segunda ronda).
      */
     public static final double MIN_START_DISTANCE_M = 40.0;
+    /*
+     * Cuándo una carrera cuenta para la clasificación (auditoría Sprint 9, tercera ronda: una sola cuenta
+     * creaba su sala, la iniciaba y "trotaba" 30 m hasta la meta, sumando 3 victorias en 19 s). Si no se
+     * cumple, la carrera tiene ganador igual, pero es "de práctica" y no suma carreras ni victorias.
+     */
+    /** Pilotos distintos que deben haber enviado posición en la carrera. */
+    public static final int MIN_RANKED_RUNNERS = 2;
+    /** Duración mínima (servidor) entre la largada y la llegada del ganador. */
+    public static final long MIN_RANKED_RACE_MS = 60_000L;
+    /** Distancia mínima entre la primera posición del ganador y la meta. */
+    public static final double MIN_RANKED_START_DISTANCE_M = 150.0;
+
     /** Una posición sin actualizar en este tiempo deja de estar en memoria (salvo si su carrera sigue en curso). */
     static final long STALE_POSITION_MS = 10 * 60_000L;
 
@@ -111,7 +123,7 @@ public class RaceManager {
                     log.info("Salida rechazada: {} empezó a {} m de la meta en {}", runnerId, Math.round(toMeta), room.getRoomCode());
                     return null; // sin referencia válida: no se guarda nada
                 }
-                newUbication.setTrack(newUbication.getTimestamp(), now, newUbication.getTimestamp());
+                newUbication.setTrack(newUbication.getTimestamp(), now, newUbication.getTimestamp(), toMeta);
                 newUbication.setSpeed(0.0);
                 newUbication.setSuspicious(false);
                 accepted[0] = true;
@@ -140,7 +152,8 @@ public class RaceManager {
             if (suspicious) {
                 return previous; // se conserva la última posición válida
             }
-            newUbication.setTrack(previous.getTrackClientStart(), previous.getTrackServerStart(), effective);
+            newUbication.setTrack(previous.getTrackClientStart(), previous.getTrackServerStart(), effective,
+                    previous.getStartDistanceToMeta());
             accepted[0] = true;
             return newUbication;
         });
@@ -196,10 +209,41 @@ public class RaceManager {
         return roomService.getRoom(roomCode).orElse(null);
     }
 
-    /** Suma la carrera a todos los pilotos de la sala y la victoria al ganador (lo llama el game loop una vez). */
+    /**
+     * true si la carrera terminada cuenta para la clasificación: al menos {@link #MIN_RANKED_RUNNERS}
+     * pilotos enviaron posición, duró al menos {@link #MIN_RANKED_RACE_MS} y el ganador salió a
+     * {@link #MIN_RANKED_START_DISTANCE_M} o más de la meta.
+     */
+    public boolean isRanked(Room room) {
+        if (room.getWinnerId() == null || room.getStartedAt() <= 0) {
+            return false;
+        }
+        long runnersWithTelemetry = getRoomState(room.getRoomCode()).stream()
+                .map(Ubication::getRunnerId)
+                .filter(room::isMember)
+                .distinct()
+                .count();
+        Ubication winner = getUbication(room.getRoomCode(), room.getWinnerId());
+        long duration = room.getFinishedAt() - room.getStartedAt();
+        return runnersWithTelemetry >= MIN_RANKED_RUNNERS
+                && duration >= MIN_RANKED_RACE_MS
+                && winner != null
+                && winner.getStartDistanceToMeta() >= MIN_RANKED_START_DISTANCE_M;
+    }
+
+    /**
+     * Decide si la carrera cuenta ({@link #isRanked}) y, solo en ese caso, suma la carrera a todos los
+     * pilotos de la sala y la victoria al ganador. Lo llama el game loop una vez por carrera.
+     */
     @Transactional
     public void saveResults(Room room) {
         if (room.getWinnerId() == null) {
+            return;
+        }
+        boolean ranked = isRanked(room);
+        room.setRanked(ranked);
+        if (!ranked) {
+            log.info("Carrera de práctica en {} (ganador {}): no suma a la clasificación", room.getRoomCode(), room.getWinnerId());
             return;
         }
         for (String runnerId : room.getActiveRunners()) {

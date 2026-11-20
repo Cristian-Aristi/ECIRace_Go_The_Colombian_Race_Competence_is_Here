@@ -84,16 +84,16 @@ public class GameLoopService {
                     if (isWinner) {
                         log.info("🏁 GANADOR DETECTADO: {} en sala {}", ubication.getRunnerId(), roomCode);
 
-                        // Notificar a los clientes que la carrera terminó
-                        messagingTemplate.convertAndSend("/topic/rooms/" + roomCode + "/status", room);
-
-                        // Suma la carrera a todos los pilotos de la sala y la victoria al ganador.
-                        // declareWinner() es atómico, así que esto se ejecuta una sola vez por carrera.
+                        // Decide si la carrera cuenta para la clasificación y, si cuenta, suma la carrera a
+                        // todos y la victoria al ganador. declareWinner() es atómico: esto ocurre una sola vez.
                         try {
                             raceManager.saveResults(room);
                         } catch (RuntimeException e) {
                             log.warn("No se pudieron guardar los resultados de la sala {}: {}", roomCode, e.getMessage());
                         }
+
+                        // Notificar a los clientes que la carrera terminó (ya con "ranked" decidido)
+                        messagingTemplate.convertAndSend("/topic/rooms/" + roomCode + "/status", room);
                     }
                 }
             }

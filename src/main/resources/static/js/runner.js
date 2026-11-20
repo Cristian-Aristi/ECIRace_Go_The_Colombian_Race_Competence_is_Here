@@ -245,7 +245,10 @@ document.addEventListener('visibilitychange', () => {
     }
 });
 
-function mostrarNotificacionVictoria(winnerId, soyElGanador) {
+// ranked === false: carrera "de práctica" (un solo piloto, muy corta o salida junto a la meta).
+// Tiene ganador, pero el servidor no la suma a la clasificación.
+function mostrarNotificacionVictoria(winnerId, soyElGanador, ranked) {
+    const practica = ranked === false;
     const viejo = document.getElementById('victoryBanner');
     if (viejo) viejo.remove();
     const nombre = String(winnerId || 'Nadie').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -261,8 +264,9 @@ function mostrarNotificacionVictoria(winnerId, soyElGanador) {
             <div class="g-result__trophy">${UI.icon(soyElGanador ? 'trophy' : 'flag')}</div>
             <h2 class="g-result__title">${soyElGanador ? '🏆 ¡GANASTE LA CARRERA! 🏆' : 'Carrera finalizada'}</h2>
             <div class="g-result__sub">${soyElGanador
-        ? 'Llegaste primero a la meta. ¡Victoria sumada a tu perfil!'
+        ? (practica ? 'Llegaste primero a la meta.' : 'Llegaste primero a la meta. ¡Victoria sumada a tu perfil!')
         : `Ganador: <b>${nombre}</b>`}</div>
+            ${practica ? '<div class="g-result__sub"><small>Carrera de práctica: no cuenta para la clasificación (se necesitan 2 pilotos, 1 minuto de carrera y salir a 150 m de la meta).</small></div>' : ''}
             <a class="g-btn g-btn--gold" href="${volver}">Volver al garaje</a>
             <a class="g-btn" href="${tablero}">Ver el tablero de la sala</a>
         </div>`;
@@ -310,7 +314,7 @@ function procesarEstadoSala(room) {
         hudStatus.textContent = "FINALIZADA";
 
         const soyElGanador = !!room.winnerId && room.winnerId === runnerId;
-        mostrarNotificacionVictoria(room.winnerId, soyElGanador);
+        mostrarNotificacionVictoria(room.winnerId, soyElGanador, room.ranked);
     }
 }
 

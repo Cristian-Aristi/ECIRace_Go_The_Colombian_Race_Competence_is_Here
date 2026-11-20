@@ -12,6 +12,12 @@ public class WebSocketEventListener {
 
     private static final Logger log = LoggerFactory.getLogger(WebSocketEventListener.class);
 
+    private final StompSecurityInterceptor securityInterceptor;
+
+    public WebSocketEventListener(StompSecurityInterceptor securityInterceptor) {
+        this.securityInterceptor = securityInterceptor;
+    }
+
     @EventListener
     public void handleConnect(SessionConnectedEvent event) {
         Object sessionId = event.getMessage().getHeaders().get("simpSessionId");
@@ -21,5 +27,7 @@ public class WebSocketEventListener {
     @EventListener
     public void handleDisconnect(SessionDisconnectEvent event) {
         log.info("❌ Socket desconectado: sessionId={}", event.getSessionId());
+        // Si el navegador se cerró sin enviar DISCONNECT, aquí se borran sus permisos de suscripción
+        securityInterceptor.forgetSession(event.getSessionId());
     }
 }

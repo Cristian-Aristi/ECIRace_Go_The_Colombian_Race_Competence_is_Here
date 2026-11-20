@@ -49,6 +49,13 @@ public class Room {
     @JsonIgnore
     private volatile String creatorKey;
     private String winnerId = null;
+    /** Hora del servidor en que arrancó la carrera (0 mientras espera). */
+    private volatile long startedAt;
+    /**
+     * Si el resultado cuenta para la clasificación (null hasta que termina). Una carrera "de práctica"
+     * (un solo piloto, muy corta o con salida junto a la meta) declara ganador pero no suma victorias.
+     */
+    private volatile Boolean ranked;
 
     private double metaLat = 4.782800;
     private double metaLon = -74.043000;
@@ -93,6 +100,23 @@ public class Room {
     @JsonIgnore
     public String getHostKey() {
         return hostKey;
+    }
+
+    public long getStartedAt() {
+        return startedAt;
+    }
+
+    /** Solo para pruebas (simular una carrera que empezó hace un rato). */
+    public void setStartedAt(long startedAt) {
+        this.startedAt = startedAt;
+    }
+
+    public Boolean getRanked() {
+        return ranked;
+    }
+
+    public void setRanked(Boolean ranked) {
+        this.ranked = ranked;
     }
 
     @JsonIgnore
@@ -266,6 +290,7 @@ public class Room {
         this.metaLat = mLat;
         this.metaLon = mLon;
         this.status = RoomStatus.IN_PROGRESS;
+        this.startedAt = System.currentTimeMillis();
         touch();
         return true;
     }

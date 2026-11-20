@@ -13,6 +13,8 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageDeliveryException;
+import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
+import org.springframework.messaging.simp.SimpMessageType;
 import org.springframework.messaging.simp.stomp.StompCommand;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.messaging.support.MessageBuilder;
@@ -97,5 +99,58 @@ class StompSecurityInterceptorTest {
                 "hostKey", room.getHostKey()), null));
         assertThrows(MessageDeliveryException.class, () ->
                 interceptor.preSend(frame(StompCommand.SUBSCRIBE, "/topic/gamestate", "Corredor"), null));
+    }
+
+    // ---- Auditoría, 3.ª ronda: el permiso se revisa también al ENTREGAR cada mensaje ----
+
+    private void subscribe(String session, String subId, String destination, String user, String hostKey) {
+        StompHeaderAccessor acc = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+        acc.setSessionId(session);
+        acc.setSubscriptionId(subId);
+        acc.setSessionAttributes(new HashMap<>());
+        acc.setDestination(destination);
+        if (user != null) acc.setUser(new AuthenticatedUser(user));
+        if (hostKey != null) acc.addNativeHeader("hostKey", hostKey);
+        acc.setLeaveMutable(true);
+        assertNotNull(interceptor.preSend(MessageBuilder.createMessage(new byte[0], acc.getMessageHeaders()), null));
+    }
+
+    private Message<?> deliver(String session, String subId, String destination) {
+        SimpMessageHeaderAccessor acc = SimpMessageHeaderAccessor.create(SimpMessageType.MESSAGE);
+        acc.setSessionId(session);
+        acc.setSubscriptionId(subId);
+        acc.setDestination(destination);
+        return interceptor.outboundGuard().preSend(MessageBuilder.createMessage(new byte[0], acc.getMessageHeaders()), null);
+    }
+
+    @Test
+    void runnerWhoLeftStopsReceivingTheRoomTelemetry() {
+        subscribe("espia", "sub-1", "/topic/rooms/SALA-WS", "Corredor", null);
+        assertNotNull(deliver("espia", "sub-1", "/topic/rooms/SALA-WS"), "Mientras es corredor recibe");
+
+        rooms.removeRunnerFromRoom("SALA-WS", "Corredor");
+        assertNull(deliver("espia", "sub-1", "/topic/rooms/SALA-WS"), "Salió de la sala y seguía recibiendo el GPS");
+    }
+
+    @Test
+    void kickedRunnerStopsReceivingAndHostKeepsReceiving() {
+        subscribe("bot", "s", "/topic/rooms/SALA-WS/status", "Corredor", null);
+        subscribe("tablero", "s", "/topic/rooms/SALA-WS", null, room.getHostKey());
+
+        rooms.kickRunner("SALA-WS", null, room.getHostKey(), "Corredor");
+        assertNull(deliver("bot", "s", "/topic/rooms/SALA-WS/status"));
+        assertNotNull(deliver("tablero", "s", "/topic/rooms/SALA-WS"), "El host con su clave sigue recibiendo");
+    }
+
+    @Test
+    void unknownSubscriptionsAndClosedSessionsReceiveNothing() {
+        assertNull(deliver("nadie", "x", "/topic/rooms/SALA-WS"), "Sin permiso registrado no se entrega");
+
+        subscribe("s2", "a", "/topic/rooms/SALA-WS", "Corredor", null);
+        interceptor.forgetSession("s2");
+        assertNull(deliver("s2", "a", "/topic/rooms/SALA-WS"));
+
+        // Lo que no es un mensaje de sala pasa sin cambios
+        assertNotNull(deliver("nadie", "x", "/topic/otra-cosa"));
     }
 }

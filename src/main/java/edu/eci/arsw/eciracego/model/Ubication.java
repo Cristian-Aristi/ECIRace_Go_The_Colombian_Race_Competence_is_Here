@@ -28,6 +28,9 @@ public class Ubication {
     private long trackServerStart;
     @JsonIgnore
     private long effectiveTime;
+    /** Distancia a la meta de la PRIMERA posición aceptada del recorrido (para decidir si la carrera cuenta). */
+    @JsonIgnore
+    private double startDistanceToMeta;
 
 
     public Ubication() {}
@@ -137,11 +140,17 @@ public class Ubication {
         return effectiveTime;
     }
 
+    @JsonIgnore
+    public double getStartDistanceToMeta() {
+        return startDistanceToMeta;
+    }
+
     /** Lo llama solo RaceManager al aceptar un paquete. */
-    public void setTrack(long clientStart, long serverStart, long effectiveTime) {
+    public void setTrack(long clientStart, long serverStart, long effectiveTime, double startDistanceToMeta) {
         this.trackClientStart = clientStart;
         this.trackServerStart = serverStart;
         this.effectiveTime = effectiveTime;
+        this.startDistanceToMeta = startDistanceToMeta;
     }
 
 }

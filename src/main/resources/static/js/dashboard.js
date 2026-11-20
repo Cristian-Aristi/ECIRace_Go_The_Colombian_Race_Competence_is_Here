@@ -430,6 +430,7 @@ function aplicarEstadoDeSala(room) {
                 <div class="g-result__trophy">${UI.icon('trophy')}</div>
                 <h2 class="g-result__title">🏁 ¡CARRERA FINALIZADA! 🏁</h2>
                 <div class="g-result__sub">🏆 GANADOR INDISCUTIBLE: <b>${ganadorSeguro}</b></div>
+                ${room.ranked === false ? '<div class="g-result__sub"><small>Carrera de práctica: no cuenta para la clasificación.</small></div>' : ''}
                 ${carroGanador ? `<img src="${carroGanador}" alt="" style="width:90px;height:90px;margin:0 auto;object-fit:contain;image-rendering:pixelated;transform:rotate(90deg);">` : ''}
                 <button type="button" class="g-btn g-btn--gold" id="btnCloseVictoryDash">Ver el mapa</button>
             </div>`;

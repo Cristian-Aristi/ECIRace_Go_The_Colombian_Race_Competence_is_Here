@@ -68,6 +68,12 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     }
 
     @Override
+    public void configureClientOutboundChannel(ChannelRegistration registration) {
+        // Antes de entregar cada mensaje de una sala se revisa que el destinatario siga siendo corredor o host
+        registration.interceptors(securityInterceptor.outboundGuard());
+    }
+
+    @Override
     public void configureWebSocketTransport(WebSocketTransportRegistration registration) {
         // Un paquete de telemetría pesa ~200 bytes: 16 KB sobra y evita mensajes gigantes
         registration.setMessageSizeLimit(16 * 1024)

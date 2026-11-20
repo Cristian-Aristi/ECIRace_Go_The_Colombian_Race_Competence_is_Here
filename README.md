@@ -290,14 +290,15 @@ Los clientes no pueden publicar en `/topic/**` ni suscribirse a salas ajenas. El
 
 ## 🔐 Seguridad
 
-En el Sprint 9 se hicieron dos rondas de auditoría de seguridad de la API y se corrigieron sus hallazgos. La segunda ronda atacó la app corriendo y encontró: victoria instantánea enviando el primer paquete dentro de la meta, el límite por IP esquivable con la cabecera `Forwarded` o con rutas codificadas (`/api/auth/%67uest`), y salas ajenas ocupadas con cuentas bot (incluida la sala fija `CAMPUS-ECI`, que ya no existe).
+En el Sprint 9 se hicieron tres rondas de auditoría de seguridad de la API y se corrigieron sus hallazgos. La segunda ronda atacó la app corriendo y encontró: victoria instantánea enviando el primer paquete dentro de la meta, el límite por IP esquivable con la cabecera `Forwarded` o con rutas codificadas (`/api/auth/%67uest`), y salas ajenas ocupadas con cuentas bot (incluida la sala fija `CAMPUS-ECI`, que ya no existe). La tercera encontró que quien salía de una sala seguía recibiendo por WebSocket el GPS en vivo de los corredores, y que una sola cuenta podía sumar victorias jugando sola (3 en 19 s).
 
 | Área | Medida |
 |---|---|
 | Identidad | El ID token de Google se **verifica en el servidor**: firma RS256 con las llaves de Google, emisor, audiencia (nuestro client ID), expiración y correo verificado. Los invitados no pueden reclamar *tags* existentes, y los *tags* son únicos sin importar mayúsculas |
 | Sesión | Token JWT HS256 propio, válido 7 días, firmado con `ECIRACE_TOKEN_SECRET`. Cada perfil tiene una clave de sesión que rota al cerrar sesión o cambiar de *tag*, lo que invalida los tokens anteriores |
 | Autorización | El piloto siempre sale del token, nunca del cuerpo de la petición. La sala se controla con la clave del host, y solo corredores y host ven roster, meta y posiciones |
-| WebSocket | `CONNECT` autenticado, `SEND` solo a `/app/**` y suscripciones solo a la sala propia |
+| WebSocket | `CONNECT` autenticado, `SEND` solo a `/app/**` y suscripciones solo a la sala propia. El permiso se vuelve a revisar antes de entregar **cada** mensaje: quien sale de la sala o es retirado por el host deja de recibir posiciones y estado al instante |
+| Clasificación | Una carrera solo suma carreras y victorias si corrieron 2 pilotos o más que enviaron posición, duró al menos 1 minuto y el ganador salió a 150 m o más de la meta. Si no, tiene ganador igual, pero es "de práctica" (`ranked: false`) y el juego lo avisa |
 | Anti-trampa | La primera posición de cada corredor en la carrera debe estar a 40 m o más de la meta (antes se aceptaba en cualquier lugar y se ganaba al instante). El reloj del teléfono no puede adelantarse más de 3 s al tiempo real del servidor en **todo** el recorrido (antes la holgura se regalaba en cada paquete). El recorrido se guarda por sala, así que alternar el `roomCode` no reinicia la referencia, y no se borra mientras la carrera siga en curso. Se rechazan coordenadas `NaN`/`Infinity` o fuera de rango, los paquetes desordenados y la telemetría de quien no está inscrito en una carrera en curso. El botón de demo "Simular victoria" solo se muestra con `ECIRACE_DEMO_TOOLS=true`, y aun así tiene que trotar desde 60 m a 11 km/h como cualquier piloto |
 | Riesgo residual | Las posiciones las reporta el teléfono: alguien que falsifique el GPS a velocidad humana (≤ 30 km/h) puede simular un recorrido. Ningún servidor puede evitarlo sin una ubicación confiable; el anti-trampa garantiza que el recorrido sea físicamente posible (sin saltos ni salidas junto a la meta) |
 | Entradas | Listas blancas para *tags* (`3-16` caracteres sin espacios), códigos de sala y coordenadas. Las respuestas de error son JSON sin detalles internos |
@@ -346,7 +347,7 @@ Sin client ID, el botón de Google no aparece y solo está disponible el ingreso
 ./mvnw test
 ```
 
-Hay **82 pruebas automatizadas** organizadas en las siguientes suites:
+Hay **90 pruebas automatizadas** organizadas en las siguientes suites:
 
 | Suite | Pruebas | Qué verifica |
 |---|---|---|
@@ -354,10 +355,11 @@ Hay **82 pruebas automatizadas** organizadas en las siguientes suites:
 | `AntiCheatBypassTest` | 13 | Las trampas de las auditorías ya no funcionan: salida dentro de la meta, holgura de reloj acumulada paquete a paquete, alternar salas, `NaN`, timestamps atrasados o inflados, texto libre en `car` y limpieza de posiciones |
 | `RoomServiceTest` | 18 | Salas (códigos, duplicados, cupo), clave del host, quién puede ver la sala, una sala de espera por piloto, retirar pilotos, cupo por creador, límite de salas y limpieza |
 | `RateLimitBypassTest` | 2 | El límite de registros no se esquiva con rutas codificadas (`%67uest`), `;x` o barras dobles |
+| `RankedRaceTest` | 5 | Solo cuentan para la clasificación las carreras con 2 pilotos o más, de 1 minuto o más y con salida a 150 m o más de la meta |
 | `GameLoopServiceTest` | 2 | Resolución de colisiones según el umbral de distancia |
 | `AuthServiceTest` | 11 | Invitados sin suplantación, flujo de Google, cambio de *tag* con rotación de sesión y clasificación |
 | `SecurityTokensTest` | 7 | Tokens de sesión (firma, rotación, manipulación) y verificación del ID token de Google (audiencia, emisor, firma, expiración, correo) |
-| `StompSecurityInterceptorTest` | 5 | `CONNECT` autenticado, sin publicación en `/topic`, telemetría con sesión y límite, y suscripciones por sala |
+| `StompSecurityInterceptorTest` | 8 | `CONNECT` autenticado, sin publicación en `/topic`, telemetría con sesión y límite, suscripciones por sala y corte inmediato de los mensajes a quien sale o es retirado |
 | `ApiSecurityIntegrationTest` | 6 | La API completa con MockMvc: autorización por sala, retirar pilotos, perfiles sin correo, Google, cabeceras y CORS |
 | `LabControllerTokenTest` | 2 | `/admin/config` sin token por defecto |
 | `ProjectObservabilityTest` | 4 | Exposición de las métricas del proyecto |
