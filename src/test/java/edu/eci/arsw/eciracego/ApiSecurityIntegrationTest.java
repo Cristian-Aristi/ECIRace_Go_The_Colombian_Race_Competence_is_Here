@@ -140,6 +140,8 @@ class ApiSecurityIntegrationTest {
                 .andExpect(header().string("X-Frame-Options", "DENY"))
                 .andExpect(header().string("X-Content-Type-Options", "nosniff"));
         mvc.perform(get("/api/rooms")).andExpect(header().string("Cache-Control", "no-store"));
+        // Las páginas se revalidan: tras un despliegue el celular carga los scripts nuevos (?v=N)
+        mvc.perform(get("/dashboard.html")).andExpect(header().string("Cache-Control", "no-cache"));
     }
 
     @Test

@@ -243,7 +243,10 @@ function conectarWebSocket() {
 
     stompClient.connect(Session.stompHeaders(), function () {
         const key = Session.hostKey(roomCode);
-        const subHeaders = key ? { hostKey: key } : {};
+        // Un objeto NUEVO por suscripción: stomp.js le escribe el "id" al objeto que recibe, y si las dos
+        // compartían el mismo, ambas quedaban como "sub-0" y cada posición GPS llegaba al manejador del
+        // estado de la sala (el tablero se vaciaba cada segundo y los carros no se movían).
+        const subHeaders = () => (key ? { hostKey: key } : {});
         statusDisplay.innerText = "En Vivo (Conectado)";
         statusDisplay.style.color = "var(--color-teal)";
         hostStatusBadge.innerText = "ONLINE";
@@ -252,11 +255,11 @@ function conectarWebSocket() {
         stompClient.subscribe('/topic/rooms/' + roomCode, function (mensaje) {
             const ubication = JSON.parse(mensaje.body);
             actualizarMapaYLista(ubication);
-        }, subHeaders);
+        }, subHeaders());
 
         stompClient.subscribe('/topic/rooms/' + roomCode + '/status', function (mensaje) {
             aplicarEstadoDeSala(JSON.parse(mensaje.body));
-        }, subHeaders);
+        }, subHeaders());
 
     }, function () {
         statusDisplay.innerText = "Desconectado. Reintentando...";
@@ -367,7 +370,8 @@ function mostrarSinAcceso(msg) {
 let hostUserDeLaSala = null;
 
 function aplicarEstadoDeSala(room) {
-    if (!room) return;
+    // Solo un estado de sala válido (con status y roster) puede cambiar el tablero
+    if (!room || !room.status || !Array.isArray(room.activeRunners)) return;
     hostNameDeLaSala = room.hostName;
     hostUserDeLaSala = room.hostUser || null;
     if (room.hostUser && room.hostUser === Session.username()) soyHostDelTablero = true;

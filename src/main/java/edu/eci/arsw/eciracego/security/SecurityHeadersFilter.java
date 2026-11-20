@@ -33,8 +33,13 @@ public class SecurityHeadersFilter extends OncePerRequestFilter {
         response.setHeader("Permissions-Policy", "geolocation=(self), camera=(), microphone=()");
         // El botón de Google abre una ventana emergente que debe poder avisar a esta página
         response.setHeader("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
-        if (RequestPaths.isApi(request)) {
+        String path = RequestPaths.of(request);
+        if (path.startsWith("/api/")) {
             response.setHeader("Cache-Control", "no-store");
+        } else if (path.equals("/") || path.endsWith(".html")) {
+            // Las páginas se revalidan siempre: así el navegador (sobre todo en celulares) carga la versión
+            // nueva de los scripts (?v=N) en cuanto se despliega, en vez de seguir con el HTML viejo en caché.
+            response.setHeader("Cache-Control", "no-cache");
         }
         chain.doFilter(request, response);
     }
