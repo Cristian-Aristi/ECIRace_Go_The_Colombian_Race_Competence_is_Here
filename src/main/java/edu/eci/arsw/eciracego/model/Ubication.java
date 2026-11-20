@@ -1,6 +1,7 @@
 package edu.eci.arsw.eciracego.model;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 public class Ubication {
     private String runnerId;
@@ -9,9 +10,27 @@ public class Ubication {
     private long timestamp = System.currentTimeMillis();
     private double speed = 0.0;
     private boolean suspicious = false;
-    private String roomCode = "CAMPUS-ECI";
+    /** Sala del paquete. Ya no hay sala por defecto: un paquete sin sala se descarta. */
+    private String roomCode;
     private VehicleType vehicleType = VehicleType.RENAULT_4;
-    private String car;
+    /** Hora del SERVIDOR al recibir el paquete: el anti-trampas no confía solo en el reloj del teléfono. */
+    @JsonIgnore
+    private long receivedAt;
+    /*
+     * Línea de tiempo del recorrido (solo la escribe el servidor, nunca se lee del JSON del cliente):
+     * reloj del teléfono y del servidor en el primer paquete aceptado, y el tiempo "efectivo" de este
+     * paquete. El reloj del teléfono no puede adelantarse al del servidor más de la tolerancia, y esa
+     * tolerancia se cuenta UNA vez para todo el recorrido (antes se regalaba en cada paquete).
+     */
+    @JsonIgnore
+    private long trackClientStart;
+    @JsonIgnore
+    private long trackServerStart;
+    @JsonIgnore
+    private long effectiveTime;
+    /** Distancia a la meta de la PRIMERA posición aceptada del recorrido (para decidir si la carrera cuenta). */
+    @JsonIgnore
+    private double startDistanceToMeta;
 
 
     public Ubication() {}
@@ -28,7 +47,6 @@ public class Ubication {
         this.latitude = latitude;
         this.longitude = longitude;
         this.timestamp = System.currentTimeMillis();
-        this.roomCode = "CAMPUS-ECI";
     }
 
     public String getRunnerId() {
@@ -73,7 +91,7 @@ public class Ubication {
 
     public String getRoomCode() { return roomCode; }
     public void setRoomCode(String roomCode) {
-        this.roomCode = (roomCode != null && !roomCode.trim().isEmpty()) ? roomCode.trim().toUpperCase() : "CAMPUS-ECI";
+        this.roomCode = (roomCode != null && !roomCode.trim().isEmpty()) ? roomCode.trim().toUpperCase(java.util.Locale.ROOT) : null;
     }
 
     public VehicleType getVehicleType() {
@@ -84,21 +102,55 @@ public class Ubication {
             this.vehicleType = vehicleType;
         }
     }
+    /** Siempre un valor del enum VehicleType: el texto libre que mande el cliente nunca se retransmite. */
     public String getCar() {
-        if (car != null && !car.trim().isEmpty()) {
-            return car;
-        }
-        return vehicleType != null ? vehicleType.name() : "RENAULT_4";
+        return vehicleType != null ? vehicleType.name() : VehicleType.RENAULT_4.name();
     }
 
     public void setCar(String car) {
-        this.car = car;
-        if (car != null && !car.trim().isEmpty()) {
+        if (car != null && !car.trim().isEmpty() && car.length() <= 32) {
             try {
                 this.vehicleType = VehicleType.valueOf(car.trim().toUpperCase());
             } catch (IllegalArgumentException ignored) {
             }
         }
+    }
+
+    @JsonIgnore
+    public long getReceivedAt() {
+        return receivedAt;
+    }
+
+    public void setReceivedAt(long receivedAt) {
+        this.receivedAt = receivedAt;
+    }
+
+    @JsonIgnore
+    public long getTrackClientStart() {
+        return trackClientStart;
+    }
+
+    @JsonIgnore
+    public long getTrackServerStart() {
+        return trackServerStart;
+    }
+
+    @JsonIgnore
+    public long getEffectiveTime() {
+        return effectiveTime;
+    }
+
+    @JsonIgnore
+    public double getStartDistanceToMeta() {
+        return startDistanceToMeta;
+    }
+
+    /** Lo llama solo RaceManager al aceptar un paquete. */
+    public void setTrack(long clientStart, long serverStart, long effectiveTime, double startDistanceToMeta) {
+        this.trackClientStart = clientStart;
+        this.trackServerStart = serverStart;
+        this.effectiveTime = effectiveTime;
+        this.startDistanceToMeta = startDistanceToMeta;
     }
 
 }

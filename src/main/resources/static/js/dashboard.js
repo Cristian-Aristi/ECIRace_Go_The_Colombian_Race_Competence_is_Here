@@ -9,8 +9,16 @@ const UI = window.GameUI || {
 };
 
 const urlParams = new URLSearchParams(window.location.search);
-const roomCode = (urlParams.get('room') || 'CAMPUS-ECI').toUpperCase();
-document.getElementById('roomCodeDisplay').innerText = roomCode;
+// Código validado con la misma regla del servidor: un ?room= con HTML ya no llega al mapa (XSS reflejado)
+const roomCode = Session.validRoomCode(urlParams.get('room'));
+if (!roomCode) {
+    // Ya no existe una sala por defecto: sin ?room= válido se vuelve al inicio para crear o elegir una
+    window.location.replace('index.html');
+    throw new Error('Tablero sin sala: redirigiendo al inicio');
+}
+document.getElementById('roomCodeDisplay').textContent = roomCode;
+// Puede controlar la sala quien la creó en este equipo (clave del host) o el piloto host con sesión
+let soyHostDelTablero = !!Session.hostKey(roomCode);
 
 const campusCenter = [4.782800, -74.043000];
 const map = L.map('map').setView(campusCenter, 16);
@@ -60,6 +68,10 @@ function actualizarBotonMetaUI() {
 
 if (btnToggleMetaMode) {
     btnToggleMetaMode.addEventListener('click', () => {
+        if (!soyHostDelTablero) {
+            UI.toast("Solo el host de la sala puede mover la meta.", 'warn');
+            return;
+        }
         if (raceStatusValue && raceStatusValue.textContent !== 'WAITING') {
             UI.toast("La meta no se puede mover con la carrera en curso.", 'warn');
             return;
@@ -80,15 +92,12 @@ map.on('click', async function(e) {
             .openOn(map);
 
         try {
-            await fetch(`/api/rooms/${encodeURIComponent(roomCode)}/meta`, {
+            const res = await Session.api(`/api/rooms/${encodeURIComponent(roomCode)}/meta`, {
                 method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'ngrok-skip-browser-warning': 'true'
-                },
-                body: JSON.stringify({ lat: metaCoordenadas[0], lon: metaCoordenadas[1] })
+                room: roomCode,
+                body: { lat: metaCoordenadas[0], lon: metaCoordenadas[1] }
             });
-            log("Meta sincronizada con el servidor.", "info");
+            log(res.ok ? "Meta sincronizada con el servidor." : ((res.data && res.data.error) || "El servidor no aceptó la meta."), res.ok ? "info" : "warn");
         } catch (err) {
             console.log("Meta actualizada localmente (el backend la tomará al iniciar).");
         }
@@ -104,11 +113,11 @@ if ("geolocation" in navigator) {
     navigator.geolocation.getCurrentPosition(function(pos) {
         L.circleMarker([pos.coords.latitude, pos.coords.longitude], {
             color: '#e8a33d', fillColor: '#e8a33d', fillOpacity: 0.85, radius: 9
-        }).addTo(map).bindPopup(`<b>🏁 Central de Control (${roomCode})</b>`).openPopup();
+        }).addTo(map).bindPopup(`<b>🏁 Central de Control (${escaparHtml(roomCode)})</b>`).openPopup();
     }, function() {
         L.circleMarker(campusCenter, {
             color: '#e8a33d', fillColor: '#e8a33d', fillOpacity: 0.85, radius: 9
-        }).addTo(map).bindPopup(`<b>🏁 Central Campus ECI (${roomCode})</b>`);
+        }).addTo(map).bindPopup(`<b>🏁 Central Campus ECI (${escaparHtml(roomCode)})</b>`);
     });
 }
 
@@ -232,7 +241,12 @@ function conectarWebSocket() {
     stompClient = Stomp.over(socket);
     stompClient.debug = null;
 
-    stompClient.connect({}, function () {
+    stompClient.connect(Session.stompHeaders(), function () {
+        const key = Session.hostKey(roomCode);
+        // Un objeto NUEVO por suscripción: stomp.js le escribe el "id" al objeto que recibe, y si las dos
+        // compartían el mismo, ambas quedaban como "sub-0" y cada posición GPS llegaba al manejador del
+        // estado de la sala (el tablero se vaciaba cada segundo y los carros no se movían).
+        const subHeaders = () => (key ? { hostKey: key } : {});
         statusDisplay.innerText = "En Vivo (Conectado)";
         statusDisplay.style.color = "var(--color-teal)";
         hostStatusBadge.innerText = "ONLINE";
@@ -241,18 +255,19 @@ function conectarWebSocket() {
         stompClient.subscribe('/topic/rooms/' + roomCode, function (mensaje) {
             const ubication = JSON.parse(mensaje.body);
             actualizarMapaYLista(ubication);
-        });
+        }, subHeaders());
 
         stompClient.subscribe('/topic/rooms/' + roomCode + '/status', function (mensaje) {
             aplicarEstadoDeSala(JSON.parse(mensaje.body));
-        });
+        }, subHeaders());
 
     }, function () {
         statusDisplay.innerText = "Desconectado. Reintentando...";
         statusDisplay.style.color = "var(--color-alert)";
         hostStatusBadge.innerText = "OFFLINE";
         hostStatusBadge.className = 'g-pill g-pill--red';
-        setTimeout(conectarWebSocket, 5000);
+        // Sin permiso para esta sala no tiene sentido reintentar
+        if (!avisoSinAcceso) setTimeout(conectarWebSocket, 5000);
     });
 }
 
@@ -321,31 +336,45 @@ function actualizarMapaYLista(ubication) {
 // Recupera la última posición de cada corredor (por si el tablero se abrió tarde o el corredor está quieto)
 async function cargarPosicionesConocidas() {
     try {
-        const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}/positions`, {
-            headers: { 'ngrok-skip-browser-warning': 'true', 'Accept': 'application/json' }
-        });
+        const res = await Session.api(`/api/rooms/${encodeURIComponent(roomCode)}/positions`, { room: roomCode });
         if (!res.ok) return;
-        const lista = await res.json();
+        const lista = res.data || [];
         lista.forEach(u => { if (u && u.runnerId && !corredores[u.runnerId]) actualizarMapaYLista(u); });
     } catch (e) { /* se reintenta en el siguiente ciclo */ }
 }
 
 async function refrescarRosterDeSala() {
     try {
-        const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}`, {
-            headers: {
-                'ngrok-skip-browser-warning': 'true',
-                'Accept': 'application/json'
-            }
-        });
-        if (res.ok) aplicarEstadoDeSala(await res.json());
+        const res = await Session.api(`/api/rooms/${encodeURIComponent(roomCode)}`, { room: roomCode });
+        if (res.ok) {
+            aplicarEstadoDeSala(res.data);
+        } else if (res.status === 401 || res.status === 403 || res.status === 404) {
+            mostrarSinAcceso(res.status === 404
+                ? `La sala ${roomCode} no existe (o ya se cerró).`
+                : 'Solo el host y los corredores de esta sala pueden ver su tablero.');
+        }
     } catch (e) {
         console.warn('No se pudo refrescar el roster.');
     }
 }
 
+let avisoSinAcceso = false;
+function mostrarSinAcceso(msg) {
+    if (avisoSinAcceso) return;
+    avisoSinAcceso = true;
+    log(`⛔ ${msg}`, 'error');
+    UI.toast(msg, 'error', 8000);
+    if (btnStartRaceDashboard) btnStartRaceDashboard.style.display = 'none';
+}
+
+let hostUserDeLaSala = null;
+
 function aplicarEstadoDeSala(room) {
+    // Solo un estado de sala válido (con status y roster) puede cambiar el tablero
+    if (!room || !room.status || !Array.isArray(room.activeRunners)) return;
     hostNameDeLaSala = room.hostName;
+    hostUserDeLaSala = room.hostUser || null;
+    if (room.hostUser && room.hostUser === Session.username()) soyHostDelTablero = true;
     estadoCarrera = room.status;
     ganadorId = room.winnerId || null;
     if (room.radioMetaMetros) metaRadioM = room.radioMetaMetros;
@@ -380,7 +409,7 @@ function aplicarEstadoDeSala(room) {
     raceStatusValue.textContent = room.status;
 
     if (btnStartRaceDashboard) {
-        btnStartRaceDashboard.style.display = (room.status === 'WAITING') ? 'block' : 'none';
+        btnStartRaceDashboard.style.display = (room.status === 'WAITING' && soyHostDelTablero) ? 'block' : 'none';
     }
 
     ultimoRosterConocido = room.activeRunners || [];
@@ -405,6 +434,7 @@ function aplicarEstadoDeSala(room) {
                 <div class="g-result__trophy">${UI.icon('trophy')}</div>
                 <h2 class="g-result__title">🏁 ¡CARRERA FINALIZADA! 🏁</h2>
                 <div class="g-result__sub">🏆 GANADOR INDISCUTIBLE: <b>${ganadorSeguro}</b></div>
+                ${room.ranked === false ? '<div class="g-result__sub"><small>Carrera de práctica: no cuenta para la clasificación.</small></div>' : ''}
                 ${carroGanador ? `<img src="${carroGanador}" alt="" style="width:90px;height:90px;margin:0 auto;object-fit:contain;image-rendering:pixelated;transform:rotate(90deg);">` : ''}
                 <button type="button" class="g-btn g-btn--gold" id="btnCloseVictoryDash">Ver el mapa</button>
             </div>`;
@@ -421,30 +451,45 @@ function aplicarEstadoDeSala(room) {
 }
 
 btnStartRaceDashboard.addEventListener('click', async () => {
-    if (!hostNameDeLaSala) return;
+    if (!soyHostDelTablero) return;
     btnStartRaceDashboard.disabled = true;
     UI.setLabel(btnStartRaceDashboard, "INICIANDO...");
     try {
-        const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}/start`, {
+        const res = await Session.api(`/api/rooms/${encodeURIComponent(roomCode)}/start`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'ngrok-skip-browser-warning': 'true'
-            },
-            body: JSON.stringify({
-                hostName: hostNameDeLaSala,
-                metaLat: metaCoordenadas[0],
-                metaLon: metaCoordenadas[1]
-            })
+            room: roomCode,
+            body: { metaLat: metaCoordenadas[0], metaLon: metaCoordenadas[1] }
         });
-        if (!res.ok) throw new Error();
+        if (!res.ok) throw new Error((res.data && res.data.error) || 'No se pudo iniciar la carrera.');
         log('🏁 Carrera iniciada por el host.', 'info');
     } catch (e) {
-        UI.toast('No se pudo iniciar la carrera: revisa la conexión con el servidor.', 'error');
+        UI.toast(e.message || 'No se pudo iniciar la carrera: revisa la conexión con el servidor.', 'error');
         btnStartRaceDashboard.disabled = false;
         UI.setLabel(btnStartRaceDashboard, "INICIAR CARRERA");
     }
 });
+
+async function retirarPiloto(username) {
+    const ok = UI.confirm
+        ? await UI.confirm(`¿Retirar a ${username} de la sala? No podrá volver a entrar.`, 'Retirar', 'Cancelar')
+        : window.confirm(`¿Retirar a ${username} de la sala?`);
+    if (!ok) return;
+    try {
+        const res = await Session.api(`/api/rooms/${encodeURIComponent(roomCode)}/kick`, {
+            method: 'POST',
+            room: roomCode,
+            body: { username }
+        });
+        if (res.ok) {
+            log(`🚫 ${username} fue retirado de la sala.`, 'info');
+            aplicarEstadoDeSala(res.data);
+        } else {
+            UI.toast((res.data && res.data.error) || 'No se pudo retirar al piloto.', 'error');
+        }
+    } catch (e) {
+        UI.toast('Sin conexión con el servidor.', 'error');
+    }
+}
 
 // 🚀 4. Lista lateral mostrando el carro de cada corredor
 function renderizarListaCorredores() {
@@ -466,6 +511,17 @@ function renderizarListaCorredores() {
         const item = document.createElement('div');
         item.className = 'runner-item';
         item.innerHTML = `<span>${icono} ${escaparHtml(id)}</span><span style="color: ${alertColor};">${valueText}</span>`;
+        // El host puede retirar pilotos antes de la largada (por ejemplo, cuentas que solo ocupan cupo)
+        if (soyHostDelTablero && estadoCarrera === 'WAITING' && id !== hostUserDeLaSala) {
+            const kick = document.createElement('button');
+            kick.type = 'button';
+            kick.className = 'roster-kick';
+            kick.textContent = '✕';
+            kick.title = `Retirar a ${id} de la sala`;
+            kick.setAttribute('aria-label', kick.title);
+            kick.addEventListener('click', () => retirarPiloto(id));
+            item.appendChild(kick);
+        }
         runnersList.appendChild(item);
     });
 }
@@ -627,6 +683,6 @@ function programarLeaderboard() {
     requestAnimationFrame(renderizarLeaderboard);
 }
 
-conectarWebSocket();
-refrescarRosterDeSala();
+// Primero se confirma el acceso a la sala (REST) y solo entonces se abre el WebSocket
+refrescarRosterDeSala().then(() => { if (!avisoSinAcceso) conectarWebSocket(); });
 setInterval(refrescarRosterDeSala, 2000);

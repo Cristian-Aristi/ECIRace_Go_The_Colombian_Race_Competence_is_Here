@@ -36,7 +36,7 @@ public class LabFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !request.getRequestURI().startsWith("/api/");
+        return !edu.eci.arsw.eciracego.security.RequestPaths.isApi(request);
     }
 
     @Override

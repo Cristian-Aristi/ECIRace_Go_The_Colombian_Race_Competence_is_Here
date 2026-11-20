@@ -9,6 +9,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 import java.util.concurrent.locks.ReentrantLock;
 
 @Service
@@ -43,10 +46,14 @@ public class GameLoopService {
         gridLock.lock();
         try {
             checkFinishLine(currentState);
-
-            resolveCollisions(currentState);
-
-            messagingTemplate.convertAndSend("/topic/gamestate", currentState);
+            // Las colisiones solo ocurren entre corredores de la misma sala: se agrupan para no
+            // comparar todos contra todos (antes O(n²) sobre TODAS las salas en cada tick).
+            Map<String, List<Ubication>> byRoom = currentState.stream()
+                    .filter(u -> u.getRoomCode() != null)
+                    .collect(Collectors.groupingBy(u -> u.getRoomCode().toUpperCase()));
+            byRoom.values().forEach(this::resolveCollisions);
+            // Ya no se difunde /topic/gamestate: mandaba las posiciones GPS de TODAS las salas a
+            // cualquiera que se suscribiera. Cada sala recibe solo lo suyo en /topic/rooms/{code}.
         } finally {
             gridLock.unlock(); // Guaranteed lock release
         }
@@ -77,16 +84,16 @@ public class GameLoopService {
                     if (isWinner) {
                         log.info("🏁 GANADOR DETECTADO: {} en sala {}", ubication.getRunnerId(), roomCode);
 
-                        // Notificar a los clientes que la carrera terminó
-                        messagingTemplate.convertAndSend("/topic/rooms/" + roomCode + "/status", room);
-
-                        // Suma la carrera a todos los pilotos de la sala y la victoria al ganador.
-                        // declareWinner() es atómico, así que esto se ejecuta una sola vez por carrera.
+                        // Decide si la carrera cuenta para la clasificación y, si cuenta, suma la carrera a
+                        // todos y la victoria al ganador. declareWinner() es atómico: esto ocurre una sola vez.
                         try {
                             raceManager.saveResults(room);
                         } catch (RuntimeException e) {
                             log.warn("No se pudieron guardar los resultados de la sala {}: {}", roomCode, e.getMessage());
                         }
+
+                        // Notificar a los clientes que la carrera terminó (ya con "ranked" decidido)
+                        messagingTemplate.convertAndSend("/topic/rooms/" + roomCode + "/status", room);
                     }
                 }
             }

@@ -7,7 +7,7 @@ const UI = window.GameUI || {
 };
 
 const inviteUrlParams = new URLSearchParams(window.location.search);
-const roomFromInviteLink = inviteUrlParams.get('room');
+const roomFromInviteLink = Session.validRoomCode(inviteUrlParams.get('room'));
 
 function irALobby(preselectedRoom) {
     window.location.href = preselectedRoom
@@ -23,7 +23,6 @@ function detectDevice() {
 }
 
 const detected = detectDevice();
-const deviceBadge = document.getElementById('deviceBadge');
 const deviceIcon = document.getElementById('deviceIcon');
 const deviceText = document.getElementById('deviceText');
 const tabDesktop = document.getElementById('tabDesktop');
@@ -31,23 +30,19 @@ const tabMobile = document.getElementById('tabMobile');
 const desktopView = document.getElementById('desktopView');
 const mobileView = document.getElementById('mobileView');
 
-window.switchRole = function(role) {
-    if (role === 'DESKTOP') {
-        tabDesktop.classList.add('active');
-        tabMobile.classList.remove('active');
-        tabDesktop.setAttribute('aria-selected', 'true');
-        tabMobile.setAttribute('aria-selected', 'false');
-        desktopView.style.display = 'block';
-        mobileView.style.display = 'none';
-    } else {
-        tabMobile.classList.add('active');
-        tabDesktop.classList.remove('active');
-        tabMobile.setAttribute('aria-selected', 'true');
-        tabDesktop.setAttribute('aria-selected', 'false');
-        desktopView.style.display = 'none';
-        mobileView.style.display = 'block';
-    }
+function switchRole(role) {
+    const desktop = role === 'DESKTOP';
+    tabDesktop.classList.toggle('active', desktop);
+    tabMobile.classList.toggle('active', !desktop);
+    tabDesktop.setAttribute('aria-selected', String(desktop));
+    tabMobile.setAttribute('aria-selected', String(!desktop));
+    desktopView.style.display = desktop ? 'block' : 'none';
+    mobileView.style.display = desktop ? 'none' : 'block';
 }
+// Sin onclick en el HTML (la CSP no permite JavaScript en línea)
+document.querySelectorAll('[data-role]').forEach(el => {
+    el.addEventListener('click', () => switchRole(el.dataset.role));
+});
 
 if (roomFromInviteLink) {
     deviceIcon.textContent = '📱';
@@ -63,43 +58,38 @@ if (roomFromInviteLink) {
     switchRole('MOBILE');
 }
 
+// ===================== Centro de control (PC) =====================
 const hostRoomCodeInput = document.getElementById('hostRoomCodeInput');
 const btnCreateRoomAndGo = document.getElementById('btnCreateRoomAndGo');
 
 btnCreateRoomAndGo.addEventListener('click', async () => {
     const preferred = hostRoomCodeInput.value.trim();
+    if (preferred && !Session.validRoomCode(preferred)) {
+        UI.toast('Código inválido: 3 a 20 caracteres (letras, números, guion o guion bajo).', 'error');
+        return;
+    }
     btnCreateRoomAndGo.disabled = true;
     UI.setLabel(btnCreateRoomAndGo, "CREANDO...");
-
     try {
-        const res = await fetch('/api/rooms/create', {
+        const res = await Session.api('/api/rooms/create', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
-            body: JSON.stringify({
-                hostName: 'Host_Central',
-                preferredCode: preferred || null
-            })
+            body: { preferredCode: preferred || null }
         });
-
-        if (res.ok) {
-            const room = await res.json();
-            window.location.href = `dashboard.html?room=${encodeURIComponent(room.roomCode)}`;
-            return;
-        } else {
-            const err = await res.json().catch(() => ({ error: 'Ese código ya está en uso.' }));
-            UI.toast(err.error || 'No se pudo crear la sala.', 'error');
-            btnCreateRoomAndGo.disabled = false;
-            UI.setLabel(btnCreateRoomAndGo, "CREAR SALA ▷");
+        if (res.ok && res.data && res.data.room) {
+            // La clave del host solo la recibe este equipo: con ella inicia la carrera y mueve la meta
+            Session.setHostKey(res.data.room.roomCode, res.data.hostKey);
+            window.location.href = `dashboard.html?room=${encodeURIComponent(res.data.room.roomCode)}`;
             return;
         }
+        UI.toast((res.data && res.data.error) || 'No se pudo crear la sala.', 'error');
     } catch (err) {
-        console.warn("Error en creación de sala vía API, usando fallback local:", err);
+        UI.toast('Sin conexión con el servidor. Revisa tu red e inténtalo de nuevo.', 'error');
     }
-
-    const fallbackCode = preferred ? preferred.toUpperCase() : ('ECI-' + Math.floor(1000 + Math.random() * 9000));
-    window.location.href = `dashboard.html?room=${encodeURIComponent(fallbackCode)}`;
+    btnCreateRoomAndGo.disabled = false;
+    UI.setLabel(btnCreateRoomAndGo, "CREAR SALA ▷");
 });
 
+// ===================== Sesión del piloto =====================
 const activeSessionBanner = document.getElementById('activeSessionBanner');
 const savedPilotName = document.getElementById('savedPilotName');
 const btnContinueToLobby = document.getElementById('btnContinueToLobby');
@@ -107,127 +97,154 @@ const btnLogoutCurrent = document.getElementById('btnLogoutCurrent');
 
 const guestInput = document.getElementById('guestInput');
 const btnEnterGuest = document.getElementById('btnEnterGuest');
-const btnQuickDaniel = document.getElementById('btnQuickDaniel');
-const btnQuickCristian = document.getElementById('btnQuickCristian');
-const btnQuickSantiago = document.getElementById('btnQuickSantiago');
-const btnSimulateGoogle = document.getElementById('btnSimulateGoogle');
 
 const googleTagModal = document.getElementById('googleTagModal');
 const googleTagInput = document.getElementById('googleTagInput');
+const googleTagError = document.getElementById('googleTagError');
 const btnConfirmGoogleTag = document.getElementById('btnConfirmGoogleTag');
 const btnCancelGoogleTag = document.getElementById('btnCancelGoogleTag');
 
-let pendingGoogleAuth = null;
+// ID token de Google pendiente de elegir tag (solo la primera vez que se usa esa cuenta)
+let pendingGoogleToken = null;
 
-function parseJwt(token) {
+function sugerirTag(nombre) {
+    const limpio = String(nombre || '').normalize('NFC').replace(/[^\p{L}\p{N}_.\-]/gu, '').slice(0, 16);
+    return limpio.length >= 3 ? limpio : 'Piloto_' + Math.floor(1000 + Math.random() * 9000);
+}
+
+/** Lee el nombre del token de Google SOLO para sugerir un tag (el servidor no confía en esto). */
+function nombreSugeridoDelToken(idToken) {
     try {
-        const base64Url = token.split('.')[1];
-        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-        const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
-            return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-        }).join(''));
-        return JSON.parse(jsonPayload);
+        const base64 = idToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+        const json = decodeURIComponent(atob(base64).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+        const payload = JSON.parse(json);
+        return payload.given_name || payload.name || '';
     } catch (e) {
-        console.error("Error al decodificar token JWT:", e);
-        return null;
+        return '';
     }
 }
 
-window.handleCredentialResponse = function(response) {
-    const payload = parseJwt(response.credential);
-    if (payload) {
-        const defaultName = payload.given_name || payload.name || "Piloto";
-        pendingGoogleAuth = {
-            idToken: response.credential,
-            email: payload.email || (defaultName.toLowerCase() + "@gmail.com"),
-            fullName: payload.name || defaultName,
-            pictureUrl: payload.picture || ""
-        };
-        googleTagInput.value = defaultName;
-        googleTagModal.style.display = "flex";
+async function enviarLoginGoogle(idToken, username) {
+    const res = await Session.api('/api/auth/google', {
+        method: 'POST',
+        auth: false,
+        body: { idToken, username: username || null }
+    });
+    if (res.ok && res.data && res.data.token) {
+        Session.save(res.data);
+        googleTagModal.style.display = 'none';
+        irALobby(roomFromInviteLink);
+        return;
     }
-};
+    const code = res.data && res.data.code;
+    if (code === 'USERNAME_REQUIRED') {
+        pendingGoogleToken = idToken;
+        googleTagInput.value = sugerirTag(nombreSugeridoDelToken(idToken));
+        googleTagError.style.display = 'none';
+        googleTagModal.style.display = 'flex';
+        googleTagInput.focus();
+        return;
+    }
+    if (code === 'USERNAME_TAKEN' || code === 'INVALID_USERNAME') {
+        pendingGoogleToken = idToken;
+        googleTagError.textContent = res.data.error;
+        googleTagError.style.display = 'block';
+        googleTagModal.style.display = 'flex';
+        return;
+    }
+    googleTagModal.style.display = 'none';
+    pendingGoogleToken = null;
+    UI.toast((res.data && res.data.error) || 'No se pudo iniciar sesión con Google.', 'error');
+}
+
+// Callback de Google Identity Services: recibe el ID token firmado por Google
+function handleCredentialResponse(response) {
+    if (!response || !response.credential) return;
+    enviarLoginGoogle(response.credential, null).catch(() =>
+        UI.toast('Sin conexión con el servidor. Inténtalo de nuevo.', 'error'));
+}
 
 btnConfirmGoogleTag.addEventListener('click', async () => {
-    const chosenTag = googleTagInput.value.trim() || "Piloto";
-    if (pendingGoogleAuth) {
-        pendingGoogleAuth.username = chosenTag;
-        try {
-            const res = await fetch('/api/auth/google', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
-                body: JSON.stringify(pendingGoogleAuth)
-            });
-            if (res.ok) {
-                const profile = await res.json();
-                guardarSesionYRedirigir(profile.username);
-                return;
-            }
-        } catch (err) {
-            console.warn("Backend local fallback:", err);
-        }
-        guardarSesionYRedirigir(chosenTag);
+    const tag = googleTagInput.value.trim();
+    if (!Session.validUsername(tag)) {
+        googleTagError.textContent = 'El tag debe tener 3 a 16 caracteres: letras, números, punto, guion o guion bajo.';
+        googleTagError.style.display = 'block';
+        return;
+    }
+    if (!pendingGoogleToken) return;
+    btnConfirmGoogleTag.disabled = true;
+    try {
+        await enviarLoginGoogle(pendingGoogleToken, tag);
+    } catch (e) {
+        UI.toast('Sin conexión con el servidor. Inténtalo de nuevo.', 'error');
+    } finally {
+        btnConfirmGoogleTag.disabled = false;
     }
 });
 
 btnCancelGoogleTag.addEventListener('click', () => {
-    googleTagModal.style.display = "none";
-    pendingGoogleAuth = null;
+    googleTagModal.style.display = 'none';
+    pendingGoogleToken = null;
 });
 
-btnEnterGuest.addEventListener('click', async () => {
-    const name = guestInput.value.trim() || ("Piloto_" + Math.floor(100 + Math.random() * 900));
-    await autenticarInvitado(name);
-});
-
-btnQuickDaniel.addEventListener('click', () => autenticarInvitado("Daniel"));
-btnQuickCristian.addEventListener('click', () => autenticarInvitado("Cristian"));
-btnQuickSantiago.addEventListener('click', () => autenticarInvitado("Santiago"));
-
-btnSimulateGoogle.addEventListener('click', () => {
-    const email = prompt("Ingresa tu correo institucional o personal (ej. estudiosiajuan@gmail.com):", "estudiosiajuan@gmail.com");
-    if (!email || !email.includes('@')) return;
-    const baseName = email.split('@')[0];
-    const capitalized = baseName.charAt(0).toUpperCase() + baseName.slice(1);
-
-    pendingGoogleAuth = {
-        idToken: "simulated-google-token-" + Date.now(),
-        email: email,
-        fullName: capitalized,
-        pictureUrl: ""
-    };
-    googleTagInput.value = capitalized;
-    googleTagModal.style.display = "flex";
-});
-
-async function autenticarInvitado(username) {
-    try {
-        const res = await fetch('/api/auth/guest', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
-            body: JSON.stringify({ username: username })
+/** Carga el SDK de Google con el client ID que publica el servidor y dibuja el botón oficial. */
+async function iniciarGoogle() {
+    const cfg = await Session.config();
+    const contenedor = document.getElementById('googleSignInButton');
+    const aviso = document.getElementById('googleUnavailable');
+    if (!cfg.googleEnabled || !cfg.googleClientId) {
+        if (aviso) aviso.style.display = 'block';
+        return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.onload = () => {
+        google.accounts.id.initialize({
+            client_id: cfg.googleClientId,
+            callback: handleCredentialResponse,
+            ux_mode: 'popup',
+            auto_select: false,
+            cancel_on_tap_outside: true
         });
-        if (res.ok) {
-            const profile = await res.json();
-            guardarSesionYRedirigir(profile.username);
+        google.accounts.id.renderButton(contenedor, {
+            type: 'standard', shape: 'rectangular', theme: 'filled_black',
+            text: 'signin_with', size: 'large', logo_alignment: 'left'
+        });
+    };
+    script.onerror = () => { if (aviso) aviso.style.display = 'block'; };
+    document.head.appendChild(script);
+}
+
+// ===================== Invitado =====================
+btnEnterGuest.addEventListener('click', async () => {
+    const name = guestInput.value.trim();
+    if (name && !Session.validUsername(name)) {
+        UI.toast('El tag debe tener 3 a 16 caracteres: letras, números, punto, guion o guion bajo (sin espacios).', 'error');
+        return;
+    }
+    btnEnterGuest.disabled = true;
+    try {
+        const res = await Session.api('/api/auth/guest', { method: 'POST', auth: false, body: { username: name || null } });
+        if (res.ok && res.data && res.data.token) {
+            Session.save(res.data);
+            irALobby(roomFromInviteLink);
             return;
         }
+        UI.toast((res.data && res.data.error) || 'No se pudo entrar como invitado.', 'error');
     } catch (err) {
-        console.warn("Backend local fallback:", err);
+        UI.toast('Sin conexión con el servidor. Revisa tu red e inténtalo de nuevo.', 'error');
+    } finally {
+        btnEnterGuest.disabled = false;
     }
-    guardarSesionYRedirigir(username);
-}
-
-function guardarSesionYRedirigir(username) {
-    localStorage.setItem('ecirace_username', username);
-    irALobby(roomFromInviteLink);
-}
+});
 
 window.addEventListener('DOMContentLoaded', () => {
-    const active = localStorage.getItem('ecirace_username');
-    if (active) {
-        savedPilotName.textContent = active;
+    if (Session.isLoggedIn()) {
+        savedPilotName.textContent = Session.username();
         activeSessionBanner.style.display = "block";
+    } else {
+        Session.clear(); // restos de la versión anterior (nombre sin token)
     }
 });
 
@@ -235,10 +252,14 @@ btnContinueToLobby.addEventListener('click', () => {
     irALobby(roomFromInviteLink);
 });
 
-btnLogoutCurrent.addEventListener('click', () => {
-    localStorage.removeItem('ecirace_username');
+btnLogoutCurrent.addEventListener('click', async () => {
+    await Session.logout();
     activeSessionBanner.style.display = "none";
 });
+
 // Enter en el campo de tag o de sala dispara el botón correspondiente
 guestInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') btnEnterGuest.click(); });
+googleTagInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') btnConfirmGoogleTag.click(); });
 hostRoomCodeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') btnCreateRoomAndGo.click(); });
+
+iniciarGoogle();

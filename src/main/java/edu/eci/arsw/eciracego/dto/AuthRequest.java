@@ -1,30 +1,21 @@
 package edu.eci.arsw.eciracego.dto;
 
-import java.io.Serializable;
-
 /**
- * Data Transfer Object (DTO) para la autenticación de usuarios.
- * Soporta autenticación de Google Identity Services y acceso de prueba (invitado).
+ * Cuerpo de POST /api/auth/google y POST /api/auth/guest.
+ * Para Google solo se aceptan el ID token (se verifica en el servidor) y el tag elegido;
+ * email, nombre y foto salen del token verificado, nunca del cliente.
  */
-public class AuthRequest implements Serializable {
-
-    private static final long serialVersionUID = 1L;
+public class AuthRequest {
 
     private String idToken;
     private String username;
-    private String email;
-    private String fullName;
-    private String pictureUrl;
 
     public AuthRequest() {
     }
 
-    public AuthRequest(String idToken, String username, String email, String fullName, String pictureUrl) {
+    public AuthRequest(String idToken, String username) {
         this.idToken = idToken;
         this.username = username;
-        this.email = email;
-        this.fullName = fullName;
-        this.pictureUrl = pictureUrl;
     }
 
     public String getIdToken() {
@@ -41,29 +32,5 @@ public class AuthRequest implements Serializable {
 
     public void setUsername(String username) {
         this.username = username;
-    }
-
-    public String getEmail() {
-        return email;
-    }
-
-    public void setEmail(String email) {
-        this.email = email;
-    }
-
-    public String getFullName() {
-        return fullName;
-    }
-
-    public void setFullName(String fullName) {
-        this.fullName = fullName;
-    }
-
-    public String getPictureUrl() {
-        return pictureUrl;
-    }
-
-    public void setPictureUrl(String pictureUrl) {
-        this.pictureUrl = pictureUrl;
     }
 }

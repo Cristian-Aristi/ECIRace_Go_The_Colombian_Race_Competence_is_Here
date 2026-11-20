@@ -61,6 +61,14 @@ public class AntiCheatEngine {
         return speedMps * 3.6; // m/s a km/h
     }
 
+    /** Velocidad en km/h para una distancia en metros recorrida en un intervalo en milisegundos. */
+    public double speedKmH(double distanceMeters, long deltaMillis) {
+        if (!Double.isFinite(distanceMeters) || deltaMillis <= 0) {
+            return Double.NaN;
+        }
+        return (distanceMeters / (deltaMillis / 1000.0)) * 3.6;
+    }
+
     /**
      * Valida según la modalidad actual de la carrera.
      */
@@ -72,7 +80,8 @@ public class AntiCheatEngine {
      * Valida según una modalidad específica (Walking, Jogging o Running).
      */
     public boolean isSuspicious(double speedKmH, RaceMode mode) {
-        return speedKmH > mode.getMaxSpeedKmH();
+        // NaN o Infinity también son sospechosos (antes NaN > 30 daba false y se aceptaba)
+        return !Double.isFinite(speedKmH) || speedKmH > mode.getMaxSpeedKmH();
     }
 
     public void setRaceMode(RaceMode mode) {

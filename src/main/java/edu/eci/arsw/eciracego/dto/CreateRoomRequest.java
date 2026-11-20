@@ -1,22 +1,13 @@
 package edu.eci.arsw.eciracego.dto;
 
+/** Cuerpo de POST /api/rooms/create. El host lo define la sesión, no el cliente. */
 public class CreateRoomRequest {
-    private String hostName;
     private String preferredCode;
 
     public CreateRoomRequest() {}
 
-    public CreateRoomRequest(String hostName, String preferredCode) {
-        this.hostName = hostName;
+    public CreateRoomRequest(String preferredCode) {
         this.preferredCode = preferredCode;
-    }
-
-    public String getHostName() {
-        return hostName;
-    }
-
-    public void setHostName(String hostName) {
-        this.hostName = hostName;
     }
 
     public String getPreferredCode() {

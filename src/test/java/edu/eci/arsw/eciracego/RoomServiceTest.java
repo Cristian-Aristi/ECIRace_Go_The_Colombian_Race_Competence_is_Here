@@ -1,13 +1,16 @@
 package edu.eci.arsw.eciracego;
 
 import edu.eci.arsw.eciracego.model.Room;
+import edu.eci.arsw.eciracego.model.RoomActionResult;
 import edu.eci.arsw.eciracego.model.RoomJoinResult;
+import edu.eci.arsw.eciracego.security.ApiException;
 import edu.eci.arsw.eciracego.service.RoomService;
 import edu.eci.arsw.eciracego.service.impl.RoomServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -22,46 +25,52 @@ public class RoomServiceTest {
     }
 
     @Test
-    @DisplayName("Debe contener la sala CAMPUS-ECI por defecto al iniciar")
-    void shouldHaveDefaultCampusRoom() {
-        Optional<Room> defaultRoom = roomService.getRoom("CAMPUS-ECI");
-        assertTrue(defaultRoom.isPresent(), "La sala predeterminada de campus debe existir");
-        assertEquals("CAMPUS-ECI", defaultRoom.get().getRoomCode());
-        assertTrue(roomService.roomExists("campus-eci"), "Debe ser insensible a mayúsculas");
+    @DisplayName("Ya no existe la sala fija CAMPUS-ECI (nadie podía iniciarla y se podía dejar llena para siempre)")
+    void noDefaultCampusRoom() {
+        assertTrue(roomService.getAllRooms().isEmpty());
+        assertFalse(roomService.roomExists("CAMPUS-ECI"));
+        Room created = roomService.createRoom(null, "campus-eci").orElseThrow();
+        assertTrue(roomService.roomExists("CAMPUS-ECI"), "Debe ser insensible a mayúsculas");
+        assertEquals("CAMPUS-ECI", created.getRoomCode());
     }
 
     @Test
-    @DisplayName("Debe crear una nueva sala con código autogenerado")
+    @DisplayName("Debe crear una sala con código autogenerado difícil de adivinar")
     void shouldCreateRoomWithAutoCode() {
-        Optional<Room> created = roomService.createRoom("Host_Daniel", null);
-        assertTrue(created.isPresent(), "La sala debió crearse exitosamente");
-        assertNotNull(created.get().getRoomCode());
-        assertTrue(created.get().getRoomCode().startsWith("ECI-"));
-        assertEquals("Host_Daniel", created.get().getHostName());
-        assertTrue(roomService.roomExists(created.get().getRoomCode()));
+        Room created = roomService.createRoom("Host_Daniel", null).orElseThrow();
+        assertTrue(created.getRoomCode().matches("^ECI-[A-Z2-9]{6}$"), created.getRoomCode());
+        assertEquals("Host_Daniel", created.getHostName());
+        assertNotNull(created.getHostKey());
+    }
+
+    @Test
+    @DisplayName("Sin sesión, la sala la crea el centro de control")
+    void anonymousRoomIsControlCenter() {
+        Room created = roomService.createRoom(null, "PC-1").orElseThrow();
+        assertEquals(Room.CONTROL_CENTER_NAME, created.getHostName());
+        assertNull(created.getHostUser());
     }
 
     @Test
     @DisplayName("Debe crear sala con código preferido normalizado a mayúsculas")
     void shouldCreateRoomWithCustomCode() {
-        Optional<Room> created = roomService.createRoom("Central_Control", "pista-norte");
-        assertTrue(created.isPresent(), "La sala debió crearse exitosamente");
-        assertEquals("PISTA-NORTE", created.get().getRoomCode());
-        assertEquals("Central_Control", created.get().getHostName());
+        Room created = roomService.createRoom("Central_Control", "pista-norte").orElseThrow();
+        assertEquals("PISTA-NORTE", created.getRoomCode());
+    }
+
+    @Test
+    @DisplayName("Rechaza códigos de sala con caracteres no permitidos (antes se 'limpiaban')")
+    void rejectsInvalidCode() {
+        assertThrows(ApiException.class, () -> roomService.createRoom("H", "<script>"));
+        assertTrue(roomService.getRoom("<img src=x>").isEmpty());
     }
 
     @Test
     @DisplayName("No debe permitir crear dos salas con el mismo código (evita sobrescritura)")
     void shouldRejectDuplicateRoomCode() {
-        Optional<Room> first = roomService.createRoom("Host_A", "DUPLICADA");
-        assertTrue(first.isPresent());
-
-        Optional<Room> second = roomService.createRoom("Host_B", "duplicada");
-        assertTrue(second.isEmpty(), "No debe permitir crear una sala con un código ya existente");
-
-        // La sala original debe seguir intacta, con el host original
-        Room stillOriginal = roomService.getRoom("DUPLICADA").orElseThrow();
-        assertEquals("Host_A", stillOriginal.getHostName());
+        assertTrue(roomService.createRoom("Host_A", "DUPLICADA").isPresent());
+        assertTrue(roomService.createRoom("Host_B", "duplicada").isEmpty());
+        assertEquals("Host_A", roomService.getRoom("DUPLICADA").orElseThrow().getHostName());
     }
 
     @Test
@@ -75,12 +84,11 @@ public class RoomServiceTest {
 
         Room room = roomService.getRoom(code).orElseThrow();
         assertEquals(2, room.getRunnersCount());
-        assertTrue(room.getActiveRunners().contains("Daniel"));
-        assertTrue(room.getActiveRunners().contains("Cristian"));
+        assertTrue(room.isMember("Daniel"));
 
-        roomService.removeRunnerFromRoom(code, "Daniel");
+        assertTrue(roomService.removeRunnerFromRoom(code, "Daniel"));
         assertEquals(1, room.getRunnersCount());
-        assertFalse(room.getActiveRunners().contains("Daniel"));
+        assertFalse(room.isMember("Daniel"));
     }
 
     @Test
@@ -88,34 +96,171 @@ public class RoomServiceTest {
     void shouldRejectJoinWhenRoomIsFull() {
         String code = "SALA-LLENA";
         roomService.createRoom("Host", code);
-
         for (int i = 1; i <= Room.MAX_PLAYERS; i++) {
-            RoomJoinResult result = roomService.registerRunnerInRoom(code, "Piloto" + i);
-            assertEquals(RoomJoinResult.OK, result);
+            assertEquals(RoomJoinResult.OK, roomService.registerRunnerInRoom(code, "Piloto" + i));
         }
-
-        RoomJoinResult seventhResult = roomService.registerRunnerInRoom(code, "Piloto7");
-        assertEquals(RoomJoinResult.ROOM_FULL, seventhResult);
-
-        Room room = roomService.getRoom(code).orElseThrow();
-        assertEquals(Room.MAX_PLAYERS, room.getRunnersCount());
+        assertEquals(RoomJoinResult.ROOM_FULL, roomService.registerRunnerInRoom(code, "Piloto7"));
     }
 
     @Test
-    @DisplayName("Solo el host puede iniciar la carrera")
+    @DisplayName("Solo el host (o quien tiene la clave del host) puede iniciar la carrera")
     void onlyHostCanStartRace() {
         String code = "SALA-START";
-        roomService.createRoom("HostOficial", code);
+        Room room = roomService.createRoom("HostOficial", code).orElseThrow();
         roomService.registerRunnerInRoom(code, "Invitado1");
 
-        // Se pasan las coordenadas de la meta (Lat, Lon) como requiere la nueva firma
-        var rejected = roomService.startRace(code, "Invitado1", 4.782800, -74.043000);
-        assertEquals(edu.eci.arsw.eciracego.model.RoomActionResult.NOT_HOST, rejected);
-
-        var accepted = roomService.startRace(code, "HostOficial", 4.782800, -74.043000);
-        assertEquals(edu.eci.arsw.eciracego.model.RoomActionResult.SUCCESS, accepted);
-
-        Room room = roomService.getRoom(code).orElseThrow();
+        assertEquals(RoomActionResult.NOT_HOST, roomService.startRace(code, "Invitado1", null, 4.78, -74.04));
+        assertEquals(RoomActionResult.NOT_HOST, roomService.startRace(code, "hostoficial", null, 4.78, -74.04),
+                "La comparación del host es exacta");
+        assertEquals(RoomActionResult.NOT_HOST, roomService.startRace(code, null, "clave-falsa", 4.78, -74.04));
+        assertEquals(RoomActionResult.SUCCESS, roomService.startRace(code, "HostOficial", null, 4.78, -74.04));
         assertEquals(Room.RoomStatus.IN_PROGRESS, room.getStatus());
+        assertEquals(RoomActionResult.ALREADY_STARTED, roomService.startRace(code, null, room.getHostKey(), 4.78, -74.04));
+    }
+
+    @Test
+    @DisplayName("El centro de control inicia la carrera y mueve la meta con su clave")
+    void hostKeyControlsRoom() {
+        Room room = roomService.createRoom(null, "PC-SALA").orElseThrow();
+        assertEquals(RoomActionResult.SUCCESS, roomService.moveMeta("PC-SALA", null, room.getHostKey(), 4.7, -74.1));
+        assertEquals(4.7, room.getMetaLat());
+        assertEquals(RoomActionResult.SUCCESS, roomService.startRace("PC-SALA", null, room.getHostKey(), 4.7, -74.1));
+        assertEquals(RoomActionResult.ALREADY_STARTED, roomService.moveMeta("PC-SALA", null, room.getHostKey(), 1, 1));
+    }
+
+    @Test
+    @DisplayName("Solo corredores y host pueden ver la sala")
+    void canView() {
+        Room room = roomService.createRoom("Host", "VER-SALA").orElseThrow();
+        roomService.registerRunnerInRoom("VER-SALA", "Corredor");
+        assertTrue(roomService.canView("VER-SALA", "Corredor", null));
+        assertTrue(roomService.canView("VER-SALA", "Host", null));
+        assertTrue(roomService.canView("VER-SALA", null, room.getHostKey()));
+        assertFalse(roomService.canView("VER-SALA", "Extrano", null));
+        assertFalse(roomService.canView("VER-SALA", null, null));
+    }
+
+    @Test
+    @DisplayName("No se puede salir de la sala con la carrera iniciada")
+    void cannotLeaveDuringRace() {
+        Room room = roomService.createRoom("Host", "SALIR").orElseThrow();
+        roomService.registerRunnerInRoom("SALIR", "Corredor");
+        roomService.startRace("SALIR", "Host", null, 4.7, -74.1);
+        assertFalse(roomService.removeRunnerFromRoom("SALIR", "Corredor"));
+        assertTrue(room.isMember("Corredor"));
+        assertTrue(roomService.isInActiveRoom("Corredor"));
+    }
+
+    @Test
+    @DisplayName("La limpieza borra salas terminadas o abandonadas")
+    void cleanupRemovesOldRooms() {
+        Room finished = roomService.createRoom("Host", "TERMINADA").orElseThrow();
+        finished.startRace(4.7, -74.1);
+        finished.declareWinner("x");
+        roomService.createRoom("Host", "NUEVA");
+
+        long now = System.currentTimeMillis();
+        assertTrue(roomService.cleanup(now).isEmpty());
+
+        List<String> removed = roomService.cleanup(now + 16 * 60_000L);
+        assertEquals(List.of("TERMINADA"), removed);
+
+        List<String> later = roomService.cleanup(now + 3 * 60 * 60_000L);
+        assertTrue(later.contains("NUEVA"));
+        assertTrue(roomService.getAllRooms().isEmpty());
+    }
+
+    @Test
+    @DisplayName("Hay un máximo de salas simultáneas")
+    void roomLimit() {
+        RoomService limited = new RoomServiceImpl(5);
+        for (int i = 0; i < 5; i++) {
+            limited.createRoom(null, null);
+        }
+        assertThrows(IllegalStateException.class, () -> limited.createRoom(null, null));
+    }
+
+    @Test
+    @DisplayName("Un piloto solo ocupa una sala de espera: al unirse a otra sale de la anterior")
+    void oneWaitingRoomPerRunner() {
+        roomService.createRoom(null, "SALA-A");
+        roomService.createRoom(null, "SALA-B");
+        assertEquals(RoomJoinResult.OK, roomService.registerRunnerInRoom("SALA-A", "Bot"));
+
+        List<Room> left = new java.util.ArrayList<>();
+        assertEquals(RoomJoinResult.OK, roomService.registerRunnerInRoom("SALA-B", "Bot", left));
+        assertFalse(roomService.getRoom("SALA-A").orElseThrow().isMember("Bot"), "Sigue ocupando un cupo en SALA-A");
+        assertTrue(roomService.getRoom("SALA-B").orElseThrow().isMember("Bot"));
+        assertEquals(List.of("SALA-A"), left.stream().map(Room::getRoomCode).toList());
+
+        // Volver a unirse a la misma sala no saca a nadie de ningún lado
+        left.clear();
+        assertEquals(RoomJoinResult.OK, roomService.registerRunnerInRoom("SALA-B", "Bot", left));
+        assertTrue(left.isEmpty());
+    }
+
+    @Test
+    @DisplayName("Una carrera en curso no se abandona al unirse a otra sala")
+    void raceInProgressIsKept() {
+        roomService.createRoom("Host", "EN-CURSO");
+        roomService.registerRunnerInRoom("EN-CURSO", "Corredor");
+        roomService.startRace("EN-CURSO", "Host", null, 4.7, -74.1);
+        roomService.createRoom(null, "OTRA");
+        assertEquals(RoomJoinResult.OK, roomService.registerRunnerInRoom("OTRA", "Corredor"));
+        assertTrue(roomService.getRoom("EN-CURSO").orElseThrow().isMember("Corredor"));
+    }
+
+    @Test
+    @DisplayName("El host retira a un piloto y este no puede volver a entrar")
+    void hostCanKickAndKickedCannotRejoin() {
+        Room room = roomService.createRoom("Host", "KICK").orElseThrow();
+        roomService.registerRunnerInRoom("KICK", "Host");
+        roomService.registerRunnerInRoom("KICK", "Bot");
+
+        assertEquals(RoomActionResult.NOT_HOST, roomService.kickRunner("KICK", "Bot", null, "Host"));
+        assertEquals(RoomActionResult.NOT_HOST, roomService.kickRunner("KICK", null, "clave-falsa", "Bot"));
+        assertEquals(RoomActionResult.RUNNER_NOT_FOUND, roomService.kickRunner("KICK", "Host", null, "Host"), "El host no se retira a sí mismo");
+        assertEquals(RoomActionResult.RUNNER_NOT_FOUND, roomService.kickRunner("KICK", "Host", null, "Nadie"));
+
+        assertEquals(RoomActionResult.SUCCESS, roomService.kickRunner("KICK", "Host", null, "Bot"));
+        assertFalse(room.isMember("Bot"));
+        assertEquals(RoomJoinResult.KICKED, roomService.registerRunnerInRoom("KICK", "Bot"));
+
+        // Con la clave del host (centro de control) también se puede
+        roomService.registerRunnerInRoom("KICK", "Otro");
+        assertEquals(RoomActionResult.SUCCESS, roomService.kickRunner("KICK", null, room.getHostKey(), "Otro"));
+
+        roomService.registerRunnerInRoom("KICK", "Tercero");
+        roomService.startRace("KICK", "Host", null, 4.7, -74.1);
+        assertEquals(RoomActionResult.ALREADY_STARTED, roomService.kickRunner("KICK", "Host", null, "Tercero"));
+    }
+
+    @Test
+    @DisplayName("Cupo de salas abiertas por creador: se cierran sus salas vacías y luego 429")
+    void creatorQuota() {
+        RoomServiceImpl service = new RoomServiceImpl(100, 2, true);
+        Room first = service.createRoom(null, "PC-1", "ip:1.2.3.4").orElseThrow();
+        service.createRoom(null, "PC-2", "ip:1.2.3.4").orElseThrow();
+
+        // La tercera sala cierra la más antigua que sigue vacía
+        service.createRoom(null, "PC-3", "ip:1.2.3.4").orElseThrow();
+        assertFalse(service.roomExists("PC-1"));
+        assertNotNull(first.getHostKey());
+
+        // Con gente en sus salas ya no hay qué cerrar: 429
+        service.registerRunnerInRoom("PC-2", "A");
+        service.registerRunnerInRoom("PC-3", "B");
+        ApiException e = assertThrows(ApiException.class, () -> service.createRoom(null, "PC-4", "ip:1.2.3.4"));
+        assertEquals(429, e.getStatus().value());
+        assertEquals("TOO_MANY_ROOMS", e.getCode());
+
+        // Otro creador no se ve afectado
+        assertTrue(service.createRoom(null, "PC-5", "ip:5.6.7.8").isPresent());
+        // Con el límite por IP apagado (pruebas de carga) no hay cupo por creador
+        RoomServiceImpl loadTest = new RoomServiceImpl(100, 2, false);
+        for (int i = 0; i < 5; i++) {
+            loadTest.registerRunnerInRoom(loadTest.createRoom("k6", null, "user:k6").orElseThrow().getRoomCode(), "x" + i);
+        }
+        assertEquals(5, loadTest.getAllRooms().size());
     }
 }

@@ -11,37 +11,37 @@ const UI = window.GameUI || {
 };
 
 const urlParams = new URLSearchParams(window.location.search);
-let runnerId = urlParams.get('player');
+const roomCode = Session.validRoomCode(urlParams.get('room'));
 let selectedCar = urlParams.get('car');
 
-// 🚀 1. Blindaje de localStorage y lectura del carro elegido en el Lobby
+// Ya no existe una sala por defecto: sin ?room= válido se vuelve al lobby para elegir una
+if (!roomCode) {
+    window.location.replace('lobby.html');
+    throw new Error('Corredor sin sala: redirigiendo al lobby');
+}
+
+// El piloto es el de la sesión emitida por el servidor (ya no se acepta ?player= en la URL).
+// El servidor además ignora cualquier runnerId que mande el cliente: usa el del token.
+if (!Session.requireLogin(roomCode)) {
+    throw new Error('Sin sesión: redirigiendo al inicio');
+}
+const runnerId = Session.username();
+
 try {
-    if (!runnerId) {
-        runnerId = localStorage.getItem('ecirace_username');
-    }
     if (!selectedCar) {
         selectedCar = localStorage.getItem('ecirace_car') || localStorage.getItem('selectedCar');
     }
 } catch (e) {
     console.warn("Memoria local restringida por el navegador.");
 }
-
-if (!runnerId || runnerId.trim() === '') {
-    alert("Acceso denegado: Debes iniciar sesión en el Lobby antes de ingresar a la pista.");
-    window.location.href = "index.html";
-}
-runnerId = runnerId.trim();
 // Solo se aceptan los valores del enum VehicleType (los mismos que usa el Lobby y el Dashboard)
 const VEHICULOS_VALIDOS = ['RENAULT_4', 'CHEVROLET_SPARK', 'MAZDA_323'];
 selectedCar = (selectedCar || '').trim().toUpperCase();
 if (!VEHICULOS_VALIDOS.includes(selectedCar)) selectedCar = 'RENAULT_4';
 
 try {
-    localStorage.setItem('ecirace_username', runnerId);
     localStorage.setItem('ecirace_car', selectedCar);
 } catch (e) {}
-
-const roomCode = (urlParams.get('room') || 'CAMPUS-ECI').toUpperCase();
 
 // ---- Carro elegido en el HUD ----
 const IMAGEN_CARRO = { RENAULT_4: 'img/renault.png?v=2', CHEVROLET_SPARK: 'img/spark.png?v=2', MAZDA_323: 'img/mazda.png?v=2' };
@@ -206,7 +206,6 @@ function log(msg, type = 'info') {
 // velocidad sobre el tiempo real entre dos lecturas del sensor y no sobre el intervalo de envío.
 function construirPayload(lat, lng, ts) {
     return {
-        runnerId: runnerId,
         latitude: lat,
         longitude: lng,
         roomCode: roomCode,
@@ -246,7 +245,10 @@ document.addEventListener('visibilitychange', () => {
     }
 });
 
-function mostrarNotificacionVictoria(winnerId, soyElGanador) {
+// ranked === false: carrera "de práctica" (un solo piloto, muy corta o salida junto a la meta).
+// Tiene ganador, pero el servidor no la suma a la clasificación.
+function mostrarNotificacionVictoria(winnerId, soyElGanador, ranked) {
+    const practica = ranked === false;
     const viejo = document.getElementById('victoryBanner');
     if (viejo) viejo.remove();
     const nombre = String(winnerId || 'Nadie').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -255,15 +257,16 @@ function mostrarNotificacionVictoria(winnerId, soyElGanador) {
     overlay.className = 'g-result' + (soyElGanador ? '' : ' g-result--lose');
     overlay.setAttribute('role', 'alertdialog');
     overlay.setAttribute('aria-modal', 'true');
-    const volver = `lobby.html?player=${encodeURIComponent(runnerId)}`;
+    const volver = 'lobby.html';
     const tablero = `dashboard.html?room=${encodeURIComponent(roomCode)}`;
     overlay.innerHTML = `
         <div class="g-result__card g-panel">
             <div class="g-result__trophy">${UI.icon(soyElGanador ? 'trophy' : 'flag')}</div>
             <h2 class="g-result__title">${soyElGanador ? '🏆 ¡GANASTE LA CARRERA! 🏆' : 'Carrera finalizada'}</h2>
             <div class="g-result__sub">${soyElGanador
-        ? 'Llegaste primero a la meta. ¡Victoria sumada a tu perfil!'
+        ? (practica ? 'Llegaste primero a la meta.' : 'Llegaste primero a la meta. ¡Victoria sumada a tu perfil!')
         : `Ganador: <b>${nombre}</b>`}</div>
+            ${practica ? '<div class="g-result__sub"><small>Carrera de práctica: no cuenta para la clasificación (se necesitan 2 pilotos, 1 minuto de carrera y salir a 150 m de la meta).</small></div>' : ''}
             <a class="g-btn g-btn--gold" href="${volver}">Volver al garaje</a>
             <a class="g-btn" href="${tablero}">Ver el tablero de la sala</a>
         </div>`;
@@ -310,9 +313,8 @@ function procesarEstadoSala(room) {
         detenerTodo();
         hudStatus.textContent = "FINALIZADA";
 
-        const soyElGanador = !!room.winnerId && room.winnerId.trim().toLowerCase() === runnerId.trim().toLowerCase();
-        mostrarNotificacionVictoria(room.winnerId, soyElGanador);
-        try { localStorage.removeItem('ecirace_username'); } catch (e) {}
+        const soyElGanador = !!room.winnerId && room.winnerId === runnerId;
+        mostrarNotificacionVictoria(room.winnerId, soyElGanador, room.ranked);
     }
 }
 
@@ -340,14 +342,11 @@ function applyGateState(status) {
 
 async function consultarEstadoSala() {
     try {
-        const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}`, {
-            headers: {
-                'ngrok-skip-browser-warning': 'true',
-                'Accept': 'application/json'
-            }
-        });
+        const res = await Session.api(`/api/rooms/${encodeURIComponent(roomCode)}`);
         if (res.ok) {
-            procesarEstadoSala(await res.json());
+            procesarEstadoSala(res.data);
+        } else if (res.status === 401) {
+            Session.requireLogin(roomCode);
         } else {
             applyGateState('WAITING');
         }
@@ -374,7 +373,7 @@ function conectarWebSocket() {
     stompClient = Stomp.over(socket);
     stompClient.debug = null;
 
-    stompClient.connect({}, function () {
+    stompClient.connect(Session.stompHeaders(), function () {
         isWsConnected = true;
         if (wsStatusDisplay) {
             wsStatusDisplay.innerText = "CONECTADO (En Vivo)";
@@ -389,8 +388,25 @@ function conectarWebSocket() {
 
         // Si se perdió el socket durante la carrera, nos ponemos al día con el estado actual
         consultarEstadoSala();
-    }, function () {
+    }, function (error) {
         isWsConnected = false;
+        // Errores definitivos del servidor (frame ERROR): reintentar no sirve, así que no se entra en bucle
+        const motivo = (error && error.headers && error.headers.message) || '';
+        if (/sesi[oó]n inv[aá]lida|iniciar sesi[oó]n/i.test(motivo)) {
+            log('Tu sesión venció. Vuelve a iniciar sesión.', 'error');
+            Session.clear();
+            Session.requireLogin(roomCode);
+            return;
+        }
+        if (/no tienes acceso/i.test(motivo)) {
+            if (wsStatusDisplay) {
+                wsStatusDisplay.innerText = "SIN ACCESO";
+                wsStatusDisplay.className = 'g-pill g-pill--red';
+            }
+            UI.toast('Ya no estás inscrito en esta sala. Volviendo al lobby...', 'error');
+            setTimeout(() => { window.location.href = 'lobby.html'; }, 2500);
+            return;
+        }
         // stomp.js llama a este callback tanto si falla la conexión inicial como si se cae el socket después
         if (wsStatusDisplay) {
             wsStatusDisplay.innerText = "RECONECTANDO...";
@@ -564,14 +580,9 @@ if (btnSimulateWin) {
             let targetLon = -74.043000;
 
             try {
-                const res = await fetch(`/api/rooms/${encodeURIComponent(roomCode)}`, {
-                    headers: {
-                        'ngrok-skip-browser-warning': 'true',
-                        'Accept': 'application/json'
-                    }
-                });
+                const res = await Session.api(`/api/rooms/${encodeURIComponent(roomCode)}`);
                 if (res.ok) {
-                    const room = await res.json();
+                    const room = res.data;
                     if (room.metaLat && room.metaLon) {
                         targetLat = room.metaLat;
                         targetLon = room.metaLon;
@@ -586,8 +597,10 @@ if (btnSimulateWin) {
             detenerTransmisionContinua();
             if (window.simPathInterval) clearInterval(window.simPathInterval);
 
-            let startLat = targetLat - 0.0001;
-            let startLon = targetLon - 0.0001;
+            // El servidor no acepta una salida a menos de 40 m de la meta: se arranca ~60 m al sur
+            // y se trota a ~11 km/h (20 pasos de 1 s), una velocidad que el anti-trampas acepta.
+            let startLat = targetLat - 0.00055;
+            let startLon = targetLon;
 
             enviarTelemetria(construirPayload(startLat, startLon));
             updateUI(startLat, startLon, 1, 0, 'ENFRIANDO RADAR...');
@@ -620,7 +633,7 @@ if (btnSimulateWin) {
                         // La victoria NO se declara aquí: la confirma el servidor para todos los dispositivos a la vez
                         UI.setLabel(btnSimulateWin, "En la meta, esperando confirmación...");
                     }
-                }, 250);
+                }, 1000);
             }, 2000);
 
         } catch (e) {
@@ -630,6 +643,20 @@ if (btnSimulateWin) {
         }
     });
 }
+
+// Herramientas de demostración (simulador de ruta y "simular victoria"): solo si el servidor las
+// habilita con ECIRACE_DEMO_TOOLS=true. En producción permitirían ganar sin moverse.
+['btnToggleSim', 'btnSimulateWin'].forEach(id => {
+    const b = document.getElementById(id);
+    if (b) b.style.display = 'none';
+});
+Session.config().then(cfg => {
+    if (!cfg.demoTools) return;
+    ['btnToggleSim', 'btnSimulateWin'].forEach(id => {
+        const b = document.getElementById(id);
+        if (b) b.style.display = '';
+    });
+});
 
 conectarWebSocket();
 consultarEstadoSala();

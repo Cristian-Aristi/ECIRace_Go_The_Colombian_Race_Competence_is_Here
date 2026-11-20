@@ -28,6 +28,7 @@
 	</scm>
 	<properties>
 		<java.version>21</java.version>
+		<nimbus-jose-jwt.version>10.9.1</nimbus-jose-jwt.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -67,6 +68,12 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-actuator</artifactId>
+		</dependency>
+		<!-- Verificación del ID token de Google (JWKS/RS256) y firma de los tokens de sesión propios (HS256) -->
+		<dependency>
+			<groupId>com.nimbusds</groupId>
+			<artifactId>nimbus-jose-jwt</artifactId>
+			<version>${nimbus-jose-jwt.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>io.micrometer</groupId>
