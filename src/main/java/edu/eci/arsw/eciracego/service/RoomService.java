@@ -18,7 +18,17 @@ public interface RoomService {
      * @return La sala creada, o vacío si el código ya está en uso.
      * @throws IllegalStateException si se alcanzó el máximo de salas (ecirace.rooms.max).
      */
-    Optional<Room> createRoom(String hostUser, String preferredCode);
+    default Optional<Room> createRoom(String hostUser, String preferredCode) {
+        return createRoom(hostUser, preferredCode, hostUser != null ? "user:" + hostUser : null);
+    }
+
+    /**
+     * Igual que {@link #createRoom(String, String)}, con cupo de salas activas por creador.
+     * @param creatorKey "user:&lt;tag&gt;" o "ip:&lt;ip&gt;" (null = sin cupo). Si el creador ya tiene el
+     *                   máximo, se cierran primero sus salas de espera vacías más antiguas.
+     * @throws edu.eci.arsw.eciracego.security.ApiException 429 TOO_MANY_ROOMS si aun así no hay cupo.
+     */
+    Optional<Room> createRoom(String hostUser, String preferredCode, String creatorKey);
 
     Optional<Room> getRoom(String roomCode);
 
@@ -27,10 +37,22 @@ public interface RoomService {
 
     boolean roomExists(String roomCode);
 
-    RoomJoinResult registerRunnerInRoom(String roomCode, String runnerId);
+    default RoomJoinResult registerRunnerInRoom(String roomCode, String runnerId) {
+        return registerRunnerInRoom(roomCode, runnerId, new java.util.ArrayList<>());
+    }
+
+    /**
+     * Une al corredor a la sala. Un piloto solo ocupa UNA sala de espera: al unirse a otra, sale de las
+     * anteriores (antes una sola cuenta bot podía llenar un cupo en todas las salas a la vez).
+     * @param leftRooms se llena con las salas de espera de las que salió (para avisarles por WebSocket).
+     */
+    RoomJoinResult registerRunnerInRoom(String roomCode, String runnerId, List<Room> leftRooms);
 
     /** Retira al corredor (solo antes de la largada). */
     boolean removeRunnerFromRoom(String roomCode, String runnerId);
+
+    /** El host (o quien tenga la clave del host) retira a un corredor antes de la largada; no puede volver. */
+    RoomActionResult kickRunner(String roomCode, String requester, String hostKey, String runnerId);
 
     /** Inicia la carrera si quien lo pide es el piloto host o presenta la clave del host. */
     RoomActionResult startRace(String roomCode, String requester, String hostKey, double metaLat, double metaLon);

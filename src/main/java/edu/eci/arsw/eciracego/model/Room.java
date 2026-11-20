@@ -39,6 +39,15 @@ public class Room {
     private volatile long lastActivity;
     private volatile long finishedAt;
     private final Set<String> activeRunners = ConcurrentHashMap.newKeySet();
+    /** Pilotos que el host retiró: no pueden volver a unirse (evita que un bot ocupe el cupo una y otra vez). */
+    @JsonIgnore
+    private final Set<String> kicked = ConcurrentHashMap.newKeySet();
+    /**
+     * Quién creó la sala, para el cupo de salas activas por creador: "user:&lt;tag&gt;" o "ip:&lt;ip&gt;"
+     * (centro de control sin sesión). Nunca se serializa.
+     */
+    @JsonIgnore
+    private volatile String creatorKey;
     private String winnerId = null;
 
     private double metaLat = 4.782800;
@@ -84,6 +93,15 @@ public class Room {
     @JsonIgnore
     public String getHostKey() {
         return hostKey;
+    }
+
+    @JsonIgnore
+    public String getCreatorKey() {
+        return creatorKey;
+    }
+
+    public void setCreatorKey(String creatorKey) {
+        this.creatorKey = creatorKey;
     }
 
     public double getMetaLat() { return metaLat; }
@@ -184,6 +202,9 @@ public class Room {
         if (activeRunners.contains(cleanId)) {
             return RoomJoinResult.OK; // reconexión idempotente del mismo piloto
         }
+        if (kicked.contains(cleanId)) {
+            return RoomJoinResult.KICKED;
+        }
         if (status != RoomStatus.WAITING) {
             return RoomJoinResult.RACE_ALREADY_STARTED;
         }
@@ -205,6 +226,22 @@ public class Room {
             touch();
         }
         return removed;
+    }
+
+    /**
+     * Retira a un corredor antes de la largada y le impide volver. La autorización (host o clave del
+     * host) la valida quien llama. El piloto host no se puede retirar a sí mismo por aquí.
+     */
+    public synchronized RoomActionResult kick(String runnerId) {
+        if (status != RoomStatus.WAITING) {
+            return RoomActionResult.ALREADY_STARTED;
+        }
+        if (runnerId == null || isHost(runnerId) || !activeRunners.remove(runnerId)) {
+            return RoomActionResult.RUNNER_NOT_FOUND;
+        }
+        kicked.add(runnerId);
+        touch();
+        return RoomActionResult.SUCCESS;
     }
 
     /** Mueve la meta (solo antes de la largada). La autorización la valida quien llama. */

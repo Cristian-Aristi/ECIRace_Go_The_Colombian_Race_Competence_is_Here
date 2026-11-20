@@ -143,6 +143,40 @@ class ApiSecurityIntegrationTest {
     }
 
     @Test
+    void hostCanKickSquattersAndTheyCannotComeBack() throws Exception {
+        String host = guest("HostKick");
+        String bot = guest("BotKick");
+        String other = guest("OtroKick");
+
+        MvcResult created = mvc.perform(post("/api/rooms/create")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"preferredCode\":\"IT-KICK\"}"))
+                .andExpect(status().isCreated()).andReturn();
+        String hostKey = json(created).get("hostKey").asString();
+        mvc.perform(post("/api/rooms/IT-KICK/join").header("Authorization", "Bearer " + bot)).andExpect(status().isOk());
+        mvc.perform(post("/api/rooms/IT-KICK/join").header("Authorization", "Bearer " + other)).andExpect(status().isOk());
+
+        // Sin ser host no se puede retirar a nadie
+        mvc.perform(post("/api/rooms/IT-KICK/kick").header("Authorization", "Bearer " + other)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"username\":\"BotKick\"}"))
+                .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("NOT_HOST"));
+        mvc.perform(post("/api/rooms/IT-KICK/kick").header("Authorization", "Bearer " + host)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"username\":\"BotKick\"}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/rooms/IT-KICK/kick").header("X-Host-Key", hostKey)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"username\":\"<b>x</b>\"}"))
+                .andExpect(status().isBadRequest());
+
+        mvc.perform(post("/api/rooms/IT-KICK/kick").header("X-Host-Key", hostKey)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"username\":\"BotKick\"}"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(not(containsString("BotKick"))));
+        mvc.perform(post("/api/rooms/IT-KICK/join").header("Authorization", "Bearer " + bot))
+                .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("KICKED"));
+        // Fuera de la sala ya no la ve
+        mvc.perform(get("/api/rooms/IT-KICK").header("Authorization", "Bearer " + bot)).andExpect(status().isForbidden());
+    }
+
+    @Test
     void corsIsNotOpenToEveryOrigin() throws Exception {
         mvc.perform(get("/api/rooms").header("Origin", "https://evil.example.com"))
                 .andExpect(header().doesNotExist("Access-Control-Allow-Origin"));

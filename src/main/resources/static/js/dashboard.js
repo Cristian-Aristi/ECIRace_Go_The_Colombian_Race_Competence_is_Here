@@ -10,7 +10,12 @@ const UI = window.GameUI || {
 
 const urlParams = new URLSearchParams(window.location.search);
 // Código validado con la misma regla del servidor: un ?room= con HTML ya no llega al mapa (XSS reflejado)
-const roomCode = Session.validRoomCode(urlParams.get('room')) || 'CAMPUS-ECI';
+const roomCode = Session.validRoomCode(urlParams.get('room'));
+if (!roomCode) {
+    // Ya no existe una sala por defecto: sin ?room= válido se vuelve al inicio para crear o elegir una
+    window.location.replace('index.html');
+    throw new Error('Tablero sin sala: redirigiendo al inicio');
+}
 document.getElementById('roomCodeDisplay').textContent = roomCode;
 // Puede controlar la sala quien la creó en este equipo (clave del host) o el piloto host con sesión
 let soyHostDelTablero = !!Session.hostKey(roomCode);
@@ -359,9 +364,12 @@ function mostrarSinAcceso(msg) {
     if (btnStartRaceDashboard) btnStartRaceDashboard.style.display = 'none';
 }
 
+let hostUserDeLaSala = null;
+
 function aplicarEstadoDeSala(room) {
     if (!room) return;
     hostNameDeLaSala = room.hostName;
+    hostUserDeLaSala = room.hostUser || null;
     if (room.hostUser && room.hostUser === Session.username()) soyHostDelTablero = true;
     estadoCarrera = room.status;
     ganadorId = room.winnerId || null;
@@ -456,6 +464,28 @@ btnStartRaceDashboard.addEventListener('click', async () => {
     }
 });
 
+async function retirarPiloto(username) {
+    const ok = UI.confirm
+        ? await UI.confirm(`¿Retirar a ${username} de la sala? No podrá volver a entrar.`, 'Retirar', 'Cancelar')
+        : window.confirm(`¿Retirar a ${username} de la sala?`);
+    if (!ok) return;
+    try {
+        const res = await Session.api(`/api/rooms/${encodeURIComponent(roomCode)}/kick`, {
+            method: 'POST',
+            room: roomCode,
+            body: { username }
+        });
+        if (res.ok) {
+            log(`🚫 ${username} fue retirado de la sala.`, 'info');
+            aplicarEstadoDeSala(res.data);
+        } else {
+            UI.toast((res.data && res.data.error) || 'No se pudo retirar al piloto.', 'error');
+        }
+    } catch (e) {
+        UI.toast('Sin conexión con el servidor.', 'error');
+    }
+}
+
 // 🚀 4. Lista lateral mostrando el carro de cada corredor
 function renderizarListaCorredores() {
     activeCountDisplay.innerText = `${ultimoRosterConocido.length} / 6`;
@@ -476,6 +506,17 @@ function renderizarListaCorredores() {
         const item = document.createElement('div');
         item.className = 'runner-item';
         item.innerHTML = `<span>${icono} ${escaparHtml(id)}</span><span style="color: ${alertColor};">${valueText}</span>`;
+        // El host puede retirar pilotos antes de la largada (por ejemplo, cuentas que solo ocupan cupo)
+        if (soyHostDelTablero && estadoCarrera === 'WAITING' && id !== hostUserDeLaSala) {
+            const kick = document.createElement('button');
+            kick.type = 'button';
+            kick.className = 'roster-kick';
+            kick.textContent = '✕';
+            kick.title = `Retirar a ${id} de la sala`;
+            kick.setAttribute('aria-label', kick.title);
+            kick.addEventListener('click', () => retirarPiloto(id));
+            item.appendChild(kick);
+        }
         runnersList.appendChild(item);
     });
 }

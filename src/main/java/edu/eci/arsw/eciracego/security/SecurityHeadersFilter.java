@@ -33,7 +33,7 @@ public class SecurityHeadersFilter extends OncePerRequestFilter {
         response.setHeader("Permissions-Policy", "geolocation=(self), camera=(), microphone=()");
         // El botón de Google abre una ventana emergente que debe poder avisar a esta página
         response.setHeader("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
-        if (request.getRequestURI().startsWith("/api/")) {
+        if (RequestPaths.isApi(request)) {
             response.setHeader("Cache-Control", "no-store");
         }
         chain.doFilter(request, response);

@@ -265,12 +265,13 @@ Las rutas marcadas con 🔑 exigen `Authorization: Bearer <token>` (lo devuelven
 | `PUT` | `/api/auth/username` | 🔑 | Cambia el *tag* propio y devuelve un token nuevo |
 | `GET` | `/api/auth/profile/{username}` | Público | Perfil público (sin correo) |
 | `GET` | `/api/auth/leaderboard?limit=10` | Público | Clasificación (máx. 50, sin correos) |
-| `POST` | `/api/rooms/create` | Público (con límite) | Crea la sala y devuelve `{room, hostKey}`. Con 🔑, el piloto queda como host |
+| `POST` | `/api/rooms/create` | Público (con límite) | Crea la sala y devuelve `{room, hostKey}`. Con 🔑, el piloto queda como host. Máximo 5 salas abiertas por piloto (o por IP sin sesión): al pasarse se cierran sus salas de espera vacías más antiguas y, si no hay ninguna, responde `429 TOO_MANY_ROOMS` |
 | `GET` | `/api/rooms` | Público | Salas activas: solo código, estado y ocupación |
 | `GET` | `/api/rooms/{code}` | 🔑 corredor/host o 🏁 | Estado y roster de la sala |
 | `GET` | `/api/rooms/{code}/positions` | 🔑 corredor/host o 🏁 | Última posición conocida de cada corredor |
-| `POST` | `/api/rooms/{code}/join` | 🔑 | Unirse (siempre como el piloto del token) |
+| `POST` | `/api/rooms/{code}/join` | 🔑 | Unirse (siempre como el piloto del token). Un piloto ocupa una sola sala de espera: al unirse a otra sale de la anterior. Un piloto retirado por el host recibe `403 KICKED` |
 | `POST` | `/api/rooms/{code}/leave` | 🔑 | Salir de la sala de espera |
+| `POST` | `/api/rooms/{code}/kick` | 🔑 host o 🏁 | Retirar a un piloto (`{"username": "..."}`) antes de la largada. No puede volver a entrar |
 | `PUT` | `/api/rooms/{code}/meta` | 🔑 host o 🏁 | Mover la meta antes de la largada |
 | `POST` | `/api/rooms/{code}/start` | 🔑 host o 🏁 | Iniciar la carrera con las coordenadas de la meta |
 
@@ -289,7 +290,7 @@ Los clientes no pueden publicar en `/topic/**` ni suscribirse a salas ajenas. El
 
 ## 🔐 Seguridad
 
-En el Sprint 9 se hizo una auditoría de seguridad de la API y se corrigieron todos sus hallazgos:
+En el Sprint 9 se hicieron dos rondas de auditoría de seguridad de la API y se corrigieron sus hallazgos. La segunda ronda atacó la app corriendo y encontró: victoria instantánea enviando el primer paquete dentro de la meta, el límite por IP esquivable con la cabecera `Forwarded` o con rutas codificadas (`/api/auth/%67uest`), y salas ajenas ocupadas con cuentas bot (incluida la sala fija `CAMPUS-ECI`, que ya no existe).
 
 | Área | Medida |
 |---|---|
@@ -297,13 +298,14 @@ En el Sprint 9 se hizo una auditoría de seguridad de la API y se corrigieron to
 | Sesión | Token JWT HS256 propio, válido 7 días, firmado con `ECIRACE_TOKEN_SECRET`. Cada perfil tiene una clave de sesión que rota al cerrar sesión o cambiar de *tag*, lo que invalida los tokens anteriores |
 | Autorización | El piloto siempre sale del token, nunca del cuerpo de la petición. La sala se controla con la clave del host, y solo corredores y host ven roster, meta y posiciones |
 | WebSocket | `CONNECT` autenticado, `SEND` solo a `/app/**` y suscripciones solo a la sala propia |
-| Anti-trampa | El tiempo usado para calcular la velocidad nunca supera el tiempo real medido en el servidor (+3 s). Se rechazan coordenadas `NaN`/`Infinity` o fuera de rango y los paquetes desordenados |
+| Anti-trampa | La primera posición de cada corredor en la carrera debe estar a 40 m o más de la meta (antes se aceptaba en cualquier lugar y se ganaba al instante). El reloj del teléfono no puede adelantarse más de 3 s al tiempo real del servidor en **todo** el recorrido (antes la holgura se regalaba en cada paquete). El recorrido se guarda por sala, así que alternar el `roomCode` no reinicia la referencia, y no se borra mientras la carrera siga en curso. Se rechazan coordenadas `NaN`/`Infinity` o fuera de rango, los paquetes desordenados y la telemetría de quien no está inscrito en una carrera en curso. El botón de demo "Simular victoria" solo se muestra con `ECIRACE_DEMO_TOOLS=true`, y aun así tiene que trotar desde 60 m a 11 km/h como cualquier piloto |
+| Riesgo residual | Las posiciones las reporta el teléfono: alguien que falsifique el GPS a velocidad humana (≤ 30 km/h) puede simular un recorrido. Ningún servidor puede evitarlo sin una ubicación confiable; el anti-trampa garantiza que el recorrido sea físicamente posible (sin saltos ni salidas junto a la meta) |
 | Entradas | Listas blancas para *tags* (`3-16` caracteres sin espacios), códigos de sala y coordenadas. Las respuestas de error son JSON sin detalles internos |
 | Datos personales | El correo solo lo ve su dueño (`/api/auth/me`). El perfil público, la clasificación y la lista de salas no exponen correos, rosters ni ubicaciones |
-| Abuso | Límite por IP (10 registros o salas en ráfaga y luego 1 cada 6 s; 120 peticiones en ráfaga y luego 20/s), máximo de salas (`ECIRACE_ROOMS_MAX`), limpieza automática de salas y posiciones, y mensajes STOMP de máximo 16 KB |
+| Abuso | Límite por IP (10 registros o salas en ráfaga y luego 1 cada 6 s; 120 peticiones en ráfaga y luego 20/s), calculado sobre la ruta ya decodificada. Máximo de salas (`ECIRACE_ROOMS_MAX`) y de salas abiertas por creador (`ECIRACE_ROOMS_PER_CREATOR`). Un piloto ocupa una sola sala de espera, y el host puede retirar a quien ocupe un cupo (no puede volver). Limpieza automática de salas y posiciones, y mensajes STOMP de máximo 16 KB |
 | Navegador | CSP estricta (solo scripts propios y el SDK de Google), `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy` y `Permissions-Policy`. Leaflet y stomp.js se sirven localmente y no hay JavaScript en línea |
 | CORS | Solo el mismo origen. Orígenes extra con `ECIRACE_ALLOWED_ORIGINS` |
-| Infraestructura | Actuator en el puerto 8081 (perfil `cloud`), alcanzable solo por Caddy. Caddy rechaza rutas con `;`. El contenedor corre como usuario sin privilegios y la contraseña de métricas viaja a AWS solo como hash bcrypt. Las GitHub Actions están fijadas por SHA y el CD solo publica desde `main` |
+| Infraestructura | Actuator en el puerto 8081 (perfil `cloud`), alcanzable solo por Caddy. Caddy rechaza rutas con `;` y borra la cabecera `Forwarded` del cliente. El servidor toma la IP real con `server.forward-headers-strategy=native`: solo cree en `X-Forwarded-For` si la petición llega desde la red interna (Caddy). El contenedor corre como usuario sin privilegios y la contraseña de métricas viaja a AWS solo como hash bcrypt. Las GitHub Actions están fijadas por SHA y el CD solo publica desde `main` |
 | Laboratorio | `/admin/config` exige un token aleatorio sin valor por defecto (comparación en tiempo constante) y el servidor local solo escucha en `127.0.0.1` |
 
 ### Activar el inicio de sesión con Google
@@ -332,6 +334,7 @@ Sin client ID, el botón de Google no aparece y solo está disponible el ingreso
 | `ECIRACE_ALLOWED_ORIGINS` | vacío (mismo origen) | Orígenes extra para CORS y WebSocket, separados por comas |
 | `ECIRACE_RATELIMIT_ENABLED` | `true` | Límite por IP (apagar solo para pruebas de carga) |
 | `ECIRACE_ROOMS_MAX` | `2000` | Máximo de salas simultáneas |
+| `ECIRACE_ROOMS_PER_CREATOR` | `5` | Máximo de salas sin terminar por piloto (o por IP del centro de control). `0` = sin límite. Con `ECIRACE_RATELIMIT_ENABLED=false` tampoco se aplica |
 | `ECIRACE_DEMO_TOOLS` | `false` | Muestra el simulador de ruta y el botón **Simular victoria** en el corredor (solo para demos) |
 | `ECIRACE_LAB_TOKEN` | vacío (bloqueado) | Token de `/admin/config` en el modo laboratorio |
 
@@ -343,18 +346,19 @@ Sin client ID, el botón de Google no aparece y solo está disponible el ingreso
 ./mvnw test
 ```
 
-Hay **69 pruebas automatizadas** organizadas en las siguientes suites:
+Hay **82 pruebas automatizadas** organizadas en las siguientes suites:
 
 | Suite | Pruebas | Qué verifica |
 |---|---|---|
 | `AntiCheatEngineTest` | 4 | Distancia y velocidad con Haversine y descarte de telemetría anómala |
-| `AntiCheatBypassTest` | 7 | Las trampas de la auditoría ya no funcionan: `NaN`, timestamps atrasados o inflados, texto libre en `car` y limpieza de posiciones |
-| `RoomServiceTest` | 14 | Salas (códigos, duplicados, cupo), clave del host, quién puede ver la sala, límite de salas y limpieza |
+| `AntiCheatBypassTest` | 13 | Las trampas de las auditorías ya no funcionan: salida dentro de la meta, holgura de reloj acumulada paquete a paquete, alternar salas, `NaN`, timestamps atrasados o inflados, texto libre en `car` y limpieza de posiciones |
+| `RoomServiceTest` | 18 | Salas (códigos, duplicados, cupo), clave del host, quién puede ver la sala, una sala de espera por piloto, retirar pilotos, cupo por creador, límite de salas y limpieza |
+| `RateLimitBypassTest` | 2 | El límite de registros no se esquiva con rutas codificadas (`%67uest`), `;x` o barras dobles |
 | `GameLoopServiceTest` | 2 | Resolución de colisiones según el umbral de distancia |
 | `AuthServiceTest` | 11 | Invitados sin suplantación, flujo de Google, cambio de *tag* con rotación de sesión y clasificación |
 | `SecurityTokensTest` | 7 | Tokens de sesión (firma, rotación, manipulación) y verificación del ID token de Google (audiencia, emisor, firma, expiración, correo) |
 | `StompSecurityInterceptorTest` | 5 | `CONNECT` autenticado, sin publicación en `/topic`, telemetría con sesión y límite, y suscripciones por sala |
-| `ApiSecurityIntegrationTest` | 5 | La API completa con MockMvc: autorización por sala, perfiles sin correo, Google, cabeceras y CORS |
+| `ApiSecurityIntegrationTest` | 6 | La API completa con MockMvc: autorización por sala, retirar pilotos, perfiles sin correo, Google, cabeceras y CORS |
 | `LabControllerTokenTest` | 2 | `/admin/config` sin token por defecto |
 | `ProjectObservabilityTest` | 4 | Exposición de las métricas del proyecto |
 | `LabModeTest` | 7 | Fallas, latencia y capacidad del modo laboratorio |

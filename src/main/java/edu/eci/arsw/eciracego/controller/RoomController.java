@@ -25,9 +25,11 @@ import java.util.Map;
 /**
  * Salas. Reglas de autorización:
  * <ul>
- *   <li>Crear: cualquiera (con límite por IP). Devuelve UNA vez la clave secreta del host.</li>
- *   <li>Unirse / salir: piloto autenticado, siempre como sí mismo.</li>
- *   <li>Iniciar / mover la meta: el piloto host o quien presente la clave del host (X-Host-Key).</li>
+ *   <li>Crear: cualquiera (con límite por IP y cupo de salas abiertas por piloto o por IP). Devuelve UNA
+ *       vez la clave secreta del host.</li>
+ *   <li>Unirse / salir: piloto autenticado, siempre como sí mismo y en una sola sala de espera a la vez.</li>
+ *   <li>Iniciar / mover la meta / retirar corredores: el piloto host o quien presente la clave del host
+ *       (X-Host-Key).</li>
  *   <li>Ver estado, roster y posiciones: corredores de la sala y host.</li>
  * </ul>
  */
@@ -52,8 +54,10 @@ public class RoomController {
     public ResponseEntity<?> createRoom(@RequestBody(required = false) CreateRoomRequest request, HttpServletRequest http) {
         String hostUser = AuthenticatedUser.from(http).orElse(null);
         String preferred = request != null ? request.getPreferredCode() : null;
+        // Cupo de salas abiertas: por piloto, o por IP si la crea el centro de control sin sesión
+        String creatorKey = hostUser != null ? "user:" + hostUser : "ip:" + http.getRemoteAddr();
         try {
-            return roomService.createRoom(hostUser, preferred)
+            return roomService.createRoom(hostUser, preferred, creatorKey)
                     .<ResponseEntity<?>>map(room -> ResponseEntity.status(HttpStatus.CREATED)
                             .body(new CreatedRoom(room, room.getHostKey())))
                     .orElseGet(() -> ResponseEntity.status(HttpStatus.CONFLICT)
@@ -90,14 +94,18 @@ public class RoomController {
     @PostMapping("/{code}/join")
     public ResponseEntity<?> joinRoom(@PathVariable("code") String code, HttpServletRequest http) {
         String runnerId = AuthenticatedUser.require(http);
-        RoomJoinResult result = roomService.registerRunnerInRoom(code, runnerId);
+        List<Room> leftRooms = new java.util.ArrayList<>();
+        RoomJoinResult result = roomService.registerRunnerInRoom(code, runnerId, leftRooms);
 
         return switch (result) {
             case OK -> {
+                leftRooms.forEach(this::broadcastStatus); // el piloto dejó libre su cupo en la sala anterior
                 Room room = roomService.getRoom(code).orElseThrow();
                 broadcastStatus(room);
                 yield ResponseEntity.ok(room);
             }
+            case KICKED -> ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("error", "El host te retiró de esta sala.", "code", "KICKED"));
             case ROOM_FULL -> ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("error", "La sala ya tiene el máximo de " + Room.MAX_PLAYERS + " jugadores.", "code", "ROOM_FULL"));
             case RACE_ALREADY_STARTED -> ResponseEntity.status(HttpStatus.CONFLICT)
@@ -146,6 +154,20 @@ public class RoomController {
         return actionResponse(code, result, "Solo el host puede mover la meta.", "La meta no se puede mover con la carrera en curso.");
     }
 
+    /** El host retira a un corredor de la sala de espera (por ejemplo, una cuenta que ocupa un cupo). No puede volver. */
+    @PostMapping("/{code}/kick")
+    public ResponseEntity<?> kickRunner(@PathVariable("code") String code,
+                                        @RequestBody(required = false) Map<String, Object> body,
+                                        HttpServletRequest http) {
+        Object raw = body != null ? body.get("username") : null;
+        if (!(raw instanceof String username) || !InputValidator.isValidUsername(username)) {
+            throw ApiException.badRequest("Indica el tag del piloto que quieres retirar.");
+        }
+        String requester = AuthenticatedUser.from(http).orElse(null);
+        RoomActionResult result = roomService.kickRunner(code, requester, AuthenticatedUser.hostKey(http), username);
+        return actionResponse(code, result, "Solo el host puede retirar pilotos.", "La carrera ya inició: no se puede retirar a nadie.");
+    }
+
     private ResponseEntity<?> actionResponse(String code, RoomActionResult result, String notHost, String conflict) {
         return switch (result) {
             case SUCCESS -> {
@@ -156,6 +178,8 @@ public class RoomController {
             case NOT_HOST -> ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", notHost, "code", "NOT_HOST"));
             case ALREADY_STARTED -> ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", conflict, "code", "RACE_STARTED"));
             case NOT_FOUND -> ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "La sala no existe.", "code", "ROOM_NOT_FOUND"));
+            case RUNNER_NOT_FOUND -> ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("error", "Ese piloto no está en la sala.", "code", "RUNNER_NOT_FOUND"));
         };
     }
 

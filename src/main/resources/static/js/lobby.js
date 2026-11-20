@@ -104,8 +104,13 @@ async function cargarSalasActivas() {
         const res = await Session.api('/api/rooms');
         if (res.ok) {
             const rooms = res.data || [];
-            if (rooms && rooms.length > 0) {
-                activeRoomsContainer.innerHTML = '';
+            activeRoomsContainer.innerHTML = '';
+            if (rooms.length === 0) {
+                const vacio = document.createElement('span');
+                vacio.className = 'g-board__empty';
+                vacio.textContent = 'No hay salas abiertas: crea una o escribe el código que te compartieron.';
+                activeRoomsContainer.appendChild(vacio);
+            } else {
                 rooms.forEach(r => {
                     const isFull = (r.runnersCount || 0) >= MAX_PLAYERS;
                     const isStarted = r.status && r.status !== 'WAITING';
@@ -233,10 +238,12 @@ btnCreateRoom.addEventListener('click', async () => {
 });
 
 btnJoinRace.addEventListener('click', async () => {
-    const room = Session.validRoomCode(roomInput.value || 'CAMPUS-ECI');
+    const room = Session.validRoomCode(roomInput.value);
     joinRoomError.style.display = 'none';
     if (!room) {
-        joinRoomError.textContent = 'Código de sala inválido.';
+        joinRoomError.textContent = roomInput.value.trim()
+            ? 'Código de sala inválido.'
+            : 'Escribe el código de la sala o elige una de la lista.';
         joinRoomError.style.display = 'block';
         return;
     }
@@ -297,6 +304,12 @@ async function refreshRoomState() {
     if (!activeRoomCode || redirecting) return;
     try {
         const res = await Session.api(`/api/rooms/${encodeURIComponent(activeRoomCode)}`, { room: activeRoomCode });
+        if (res.status === 403 || res.status === 404) {
+            // El host nos retiró, entramos a otra sala desde otro equipo o la sala expiró
+            UI.toast(res.status === 404 ? 'La sala ya no existe.' : 'Ya no estás en esta sala.', 'warn');
+            exitWaitingRoom();
+            return;
+        }
         if (!res.ok) return;
         renderWaitingRoom(res.data);
     } catch (e) {
@@ -332,6 +345,17 @@ function renderWaitingRoom(room) {
             item.className = 'roster-item' + (isHostRunner ? ' is-host' : '') + (soyYo ? ' is-me' : '');
             item.textContent = (isHostRunner ? '👑 ' : '') + name + (soyYo ? ' (tú)' : '');
             item.title = isHostRunner ? 'Host de la sala' : 'Piloto';
+            // El host puede retirar a cualquier otro piloto antes de la largada (no podrá volver)
+            if (soyHost && !soyYo && room.status === 'WAITING') {
+                const kick = document.createElement('button');
+                kick.type = 'button';
+                kick.className = 'roster-kick';
+                kick.textContent = '✕';
+                kick.title = `Retirar a ${name} de la sala`;
+                kick.setAttribute('aria-label', kick.title);
+                kick.addEventListener('click', () => retirarPiloto(room.roomCode, name));
+                item.appendChild(kick);
+            }
         }
         rosterGrid.appendChild(item);
     }
@@ -346,6 +370,24 @@ function renderWaitingRoom(room) {
         safeSetStorage('ecirace_car', selectedVehicleMemory);
         safeSetStorage('ecirace_vehicle', selectedVehicleMemory);
         window.location.href = `runner.html?room=${encodeURIComponent(room.roomCode)}&car=${encodeURIComponent(selectedVehicleMemory)}`;
+    }
+}
+
+async function retirarPiloto(roomCode, username) {
+    if (!(await UI.confirm(`¿Retirar a ${username} de la sala? No podrá volver a entrar.`, 'Retirar', 'Cancelar'))) return;
+    try {
+        const res = await Session.api(`/api/rooms/${encodeURIComponent(roomCode)}/kick`, {
+            method: 'POST',
+            room: roomCode,
+            body: { username }
+        });
+        if (res.ok) {
+            renderWaitingRoom(res.data);
+        } else {
+            UI.toast((res.data && res.data.error) || 'No se pudo retirar al piloto.', 'error');
+        }
+    } catch (e) {
+        UI.toast('Sin conexión con el servidor.', 'error');
     }
 }
 
@@ -398,7 +440,11 @@ btnLeaveWaitingRoom.addEventListener('click', () => {
 });
 
 btnGoDashboard.addEventListener('click', () => {
-    const room = Session.validRoomCode(activeRoomCode || roomInput.value || 'CAMPUS-ECI') || 'CAMPUS-ECI';
+    const room = Session.validRoomCode(activeRoomCode || roomInput.value);
+    if (!room) {
+        UI.toast('Escribe o elige primero el código de la sala.', 'warn');
+        return;
+    }
     window.location.href = `dashboard.html?room=${encodeURIComponent(room)}`;
 });
 

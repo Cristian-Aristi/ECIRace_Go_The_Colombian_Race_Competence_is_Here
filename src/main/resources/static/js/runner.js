@@ -11,8 +11,14 @@ const UI = window.GameUI || {
 };
 
 const urlParams = new URLSearchParams(window.location.search);
-const roomCode = Session.validRoomCode(urlParams.get('room')) || 'CAMPUS-ECI';
+const roomCode = Session.validRoomCode(urlParams.get('room'));
 let selectedCar = urlParams.get('car');
+
+// Ya no existe una sala por defecto: sin ?room= válido se vuelve al lobby para elegir una
+if (!roomCode) {
+    window.location.replace('lobby.html');
+    throw new Error('Corredor sin sala: redirigiendo al lobby');
+}
 
 // El piloto es el de la sesión emitida por el servidor (ya no se acepta ?player= en la URL).
 // El servidor además ignora cualquier runnerId que mande el cliente: usa el del token.
@@ -570,8 +576,10 @@ if (btnSimulateWin) {
             detenerTransmisionContinua();
             if (window.simPathInterval) clearInterval(window.simPathInterval);
 
-            let startLat = targetLat - 0.0001;
-            let startLon = targetLon - 0.0001;
+            // El servidor no acepta una salida a menos de 40 m de la meta: se arranca ~60 m al sur
+            // y se trota a ~11 km/h (20 pasos de 1 s), una velocidad que el anti-trampas acepta.
+            let startLat = targetLat - 0.00055;
+            let startLon = targetLon;
 
             enviarTelemetria(construirPayload(startLat, startLon));
             updateUI(startLat, startLon, 1, 0, 'ENFRIANDO RADAR...');
@@ -604,7 +612,7 @@ if (btnSimulateWin) {
                         // La victoria NO se declara aquí: la confirma el servidor para todos los dispositivos a la vez
                         UI.setLabel(btnSimulateWin, "En la meta, esperando confirmación...");
                     }
-                }, 250);
+                }, 1000);
             }, 2000);
 
         } catch (e) {

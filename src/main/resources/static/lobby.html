@@ -9,7 +9,7 @@
     <script src="js/theme-boot.js"></script>
     <link rel="preload" href="fonts/pixelify-sans-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="fonts/vt323-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
-    <link rel="stylesheet" href="css/game.css?v=6">
+    <link rel="stylesheet" href="css/game.css?v=7">
 </head>
 <body>
 <canvas id="scene" aria-hidden="true"></canvas>
@@ -160,16 +160,13 @@
         <label class="g-label" for="roomInput">CÓDIGO DE SALA (ENTER ROOM CODE):</label>
         <div class="g-field">
             <span class="g-ico" data-icon="users"></span>
-            <input type="text" id="roomInput" placeholder="ECI-2026 o CAMPUS-ECI" value="CAMPUS-ECI"
-                   maxlength="16" autocomplete="off" spellcheck="false">
+            <input type="text" id="roomInput" placeholder="ECI-AB12CD" value=""
+                   maxlength="20" autocomplete="off" spellcheck="false">
         </div>
 
         <span class="g-label" style="margin-top: 14px;">SALAS ACTIVAS EN EL SERVIDOR (TOCA PARA SELECCIONAR):</span>
         <div id="activeRoomsContainer" class="g-rooms">
-            <span class="room-pill active" data-code="CAMPUS-ECI">
-                <span class="g-ico" data-icon="wifi" style="width:20px;height:18px;"></span>
-                <strong>CAMPUS-ECI</strong>
-            </span>
+            <span class="g-board__empty">Buscando salas...</span>
         </div>
 
         <button type="button" id="btnJoinRace" class="g-race-btn">
@@ -263,6 +260,6 @@
 
 <script src="js/game-ui.js?v=4"></script>
 <script src="js/session.js?v=1"></script>
-<script src="js/lobby.js?v=6"></script>
+<script src="js/lobby.js?v=7"></script>
 </body>
 </html>

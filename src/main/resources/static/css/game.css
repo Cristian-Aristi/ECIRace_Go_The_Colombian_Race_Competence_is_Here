@@ -843,6 +843,25 @@ button, input { font: inherit; color: inherit; }
   background: rgba(6, 13, 36, 0.45);
 }
 .roster-item.is-empty::before { background: rgba(43, 91, 181, 0.4); }
+/* Botón del host para retirar a un piloto de la sala de espera (lobby y tablero) */
+.roster-kick {
+  flex: none;
+  margin-left: auto;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--color-alert);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--color-alert);
+  font-family: var(--font-ui);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.roster-kick:hover,
+.roster-kick:focus-visible { background: var(--color-alert); color: #fff; }
 
 .waiting-pulse {
   display: inline-block;

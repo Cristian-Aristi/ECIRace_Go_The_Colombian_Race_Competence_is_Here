@@ -5,5 +5,7 @@ public enum RoomJoinResult {
     ROOM_FULL,
     RACE_ALREADY_STARTED,
     ROOM_NOT_FOUND,
-    INVALID_NAME
+    INVALID_NAME,
+    /** El host retiró a este piloto de la sala: no puede volver a entrar. */
+    KICKED
 }

@@ -19,8 +19,11 @@ import java.util.Set;
  *   <li>Crear cuentas, iniciar sesión y crear salas: ráfaga de 10 y luego 1 cada 6 s.</li>
  *   <li>El resto de la API: ráfaga de 120 y 20 por segundo.</li>
  * </ul>
- * La IP es la del cliente real: detrás de Caddy, server.forward-headers-strategy=framework hace que
- * getRemoteAddr() devuelva X-Forwarded-For (Caddy lo reescribe, no se puede falsificar desde fuera).
+ * La IP es la del cliente real: detrás de Caddy, server.forward-headers-strategy=native (RemoteIpValve
+ * de Tomcat) toma X-Forwarded-For SOLO si la petición viene de un proxy de la red interna, y Caddy
+ * reescribe esa cabecera. La cabecera estándar "Forwarded" se ignora (antes, con "framework", Spring la
+ * aceptaba de cualquiera y bastaba "Forwarded: for=1.2.3.4" para estrenar IP en cada petición).
+ * La ruta se compara ya decodificada ({@link RequestPaths}): "/api/auth/%67uest" cuenta como /api/auth/guest.
  * Se puede apagar con ECIRACE_RATELIMIT_ENABLED=false (pruebas de carga locales con k6).
  */
 @Component
@@ -40,14 +43,14 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !enabled || !request.getRequestURI().startsWith("/api/");
+        return !enabled || !RequestPaths.isApi(request);
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
         String ip = request.getRemoteAddr();
-        boolean sensitive = "POST".equalsIgnoreCase(request.getMethod()) && SENSITIVE.contains(request.getRequestURI());
+        boolean sensitive = "POST".equalsIgnoreCase(request.getMethod()) && SENSITIVE.contains(RequestPaths.of(request));
         boolean allowed = sensitive
                 ? limiter.tryAcquire("auth:" + ip, 10, 1.0 / 6.0)
                 : limiter.tryAcquire("api:" + ip, 120, 20.0);

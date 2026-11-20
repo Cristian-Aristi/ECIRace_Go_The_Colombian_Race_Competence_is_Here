@@ -20,6 +20,11 @@
 		# La Content-Security-Policy la envía la aplicación (SecurityHeadersFilter)
 	}
 
+	# La IP del cliente la decide Caddy (X-Forwarded-For, que reescribe siempre). La cabecera estándar
+	# "Forwarded" la manda el cliente tal cual: se borra para que nadie pueda inventarse otra IP y
+	# esquivar el límite de peticiones por IP del servidor.
+	request_header -Forwarded
+
 	# Rutas con ";" (parámetros de ruta): Tomcat los ignora y Caddy no, así que "/actuator;x/prometheus"
 	# podría esquivar las reglas de abajo. El juego nunca las usa: se rechazan.
 	@pathparams path_regexp pp ;

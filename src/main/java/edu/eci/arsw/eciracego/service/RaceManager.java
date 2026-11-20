@@ -12,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
 
@@ -21,14 +22,20 @@ public class RaceManager {
     private static final Logger log = LoggerFactory.getLogger(RaceManager.class);
 
     /**
-     * Tolerancia entre el reloj del teléfono y el del servidor. El tiempo transcurrido que se usa
-     * para calcular la velocidad nunca puede superar el tiempo REAL que pasó en el servidor entre
-     * dos paquetes más esta holgura (cubre la latencia de red y los paquetes que llegan en ráfaga).
+     * Cuánto puede adelantarse el reloj del teléfono al del servidor en TODO el recorrido (cubre la
+     * latencia del primer paquete y los paquetes que llegan en ráfaga tras un corte de red).
      */
     static final long CLOCK_TOLERANCE_MS = 3_000;
-    /** Una posición sin actualizar en este tiempo deja de estar en memoria. */
+    /**
+     * Distancia mínima entre la meta y la PRIMERA posición de un corredor en la carrera. Sin esto, el
+     * primer paquete se aceptaba en cualquier lugar (no hay referencia para medir la velocidad) y bastaba
+     * con mandarlo dentro de la meta para ganar al instante (auditoría Sprint 9, segunda ronda).
+     */
+    public static final double MIN_START_DISTANCE_M = 40.0;
+    /** Una posición sin actualizar en este tiempo deja de estar en memoria (salvo si su carrera sigue en curso). */
     static final long STALE_POSITION_MS = 10 * 60_000L;
 
+    /** Última posición válida de cada corredor EN CADA SALA (clave "SALA|piloto"). */
     private final ConcurrentHashMap<String, Ubication> raceState = new ConcurrentHashMap<>();
     private LongSupplier clock = System::currentTimeMillis;
 
@@ -54,16 +61,21 @@ public class RaceManager {
     }
 
     /**
-     * Actualiza la posición de un corredor de forma ATÓMICA (compute() sobre la clave del corredor).
+     * Actualiza la posición de un corredor de forma ATÓMICA (compute() sobre la clave sala+corredor).
      * <p>
      * Reglas anti-trampa:
      * <ul>
+     *   <li>Solo se acepta telemetría de una sala existente, con la carrera en curso, y de un corredor
+     *       inscrito en ella.</li>
      *   <li>Coordenadas no finitas (NaN/Infinity) o fuera de rango se descartan.</li>
-     *   <li>La hora de llegada la pone el servidor. El tiempo usado para la velocidad es el menor entre
-     *       el que dice el teléfono y el que realmente pasó en el servidor (+ tolerancia): inflar o
-     *       atrasar el "timestamp" ya no permite teletransportarse.</li>
-     *   <li>Paquetes duplicados o desordenados (timestamp no creciente) se ignoran; ya no existe el
-     *       caso "reloj muy atrasado" que reiniciaba la referencia sin validar.</li>
+     *   <li>La primera posición de la carrera debe estar al menos a {@link #MIN_START_DISTANCE_M} de la meta.</li>
+     *   <li>El recorrido se guarda por sala: cambiar el "roomCode" entre dos salas ya no reinicia la
+     *       referencia (antes permitía teletransportarse).</li>
+     *   <li>El tiempo usado para la velocidad sale del reloj del teléfono, pero ese reloj nunca puede ir
+     *       más de {@link #CLOCK_TOLERANCE_MS} por delante del tiempo real que pasó en el servidor desde
+     *       el primer paquete. Antes la tolerancia se sumaba en cada paquete: adelantando el timestamp
+     *       3 s por paquete se avanzaban ~25 m cada 200 ms (más de 400 km/h).</li>
+     *   <li>Paquetes duplicados o desordenados (timestamp no creciente) se ignoran.</li>
      * </ul>
      *
      * @return true si el paquete fue aceptado y debe retransmitirse.
@@ -73,29 +85,49 @@ public class RaceManager {
                 || !InputValidator.isValidCoordinate(newUbication.getLatitude(), newUbication.getLongitude())) {
             return false;
         }
+        Optional<Room> roomOpt = roomService.getRoom(newUbication.getRoomCode());
+        if (roomOpt.isEmpty()) {
+            return false;
+        }
+        Room room = roomOpt.get();
+        String runnerId = newUbication.getRunnerId();
+        if (room.getStatus() != Room.RoomStatus.IN_PROGRESS || !room.isMember(runnerId)) {
+            return false;
+        }
+        newUbication.setRoomCode(room.getRoomCode());
+
         long now = clock.getAsLong();
         newUbication.setReceivedAt(now);
         if (newUbication.getTimestamp() <= 0) {
             newUbication.setTimestamp(now);
         }
-        String id = newUbication.getRunnerId();
         boolean[] accepted = {false};
 
-        raceState.compute(id, (key, previous) -> {
-            // Primer paquete, o el corredor viene de otra sala: no hay referencia válida
-            if (previous == null || !sameRoom(previous, newUbication)) {
+        raceState.compute(key(room.getRoomCode(), runnerId), (key, previous) -> {
+            if (previous == null) {
+                double toMeta = antiCheatEngine.calculateDistanceMeters(
+                        newUbication.getLatitude(), newUbication.getLongitude(), room.getMetaLat(), room.getMetaLon());
+                if (!(toMeta >= MIN_START_DISTANCE_M)) {
+                    log.info("Salida rechazada: {} empezó a {} m de la meta en {}", runnerId, Math.round(toMeta), room.getRoomCode());
+                    return null; // sin referencia válida: no se guarda nada
+                }
+                newUbication.setTrack(newUbication.getTimestamp(), now, newUbication.getTimestamp());
                 newUbication.setSpeed(0.0);
                 newUbication.setSuspicious(false);
                 accepted[0] = true;
                 return newUbication;
             }
 
-            long clientDelta = newUbication.getTimestamp() - previous.getTimestamp();
-            if (clientDelta <= 0) {
+            if (newUbication.getTimestamp() <= previous.getTimestamp()) {
                 return previous; // duplicado o desordenado
             }
-            long serverDelta = Math.max(0, now - previous.getReceivedAt());
-            long effectiveDelta = Math.min(clientDelta, serverDelta + CLOCK_TOLERANCE_MS);
+            // Hasta dónde puede llegar el reloj del teléfono según el tiempo real del servidor
+            long clientLimit = previous.getTrackClientStart() + (now - previous.getTrackServerStart()) + CLOCK_TOLERANCE_MS;
+            long effective = Math.min(newUbication.getTimestamp(), clientLimit);
+            long effectiveDelta = effective - previous.getEffectiveTime();
+            if (effectiveDelta <= 0) {
+                return previous; // el teléfono va demasiado adelantado: se espera a que pase tiempo real
+            }
 
             double distance = antiCheatEngine.calculateDistanceMeters(
                     previous.getLatitude(), previous.getLongitude(),
@@ -108,6 +140,7 @@ public class RaceManager {
             if (suspicious) {
                 return previous; // se conserva la última posición válida
             }
+            newUbication.setTrack(previous.getTrackClientStart(), previous.getTrackServerStart(), effective);
             accepted[0] = true;
             return newUbication;
         });
@@ -115,8 +148,8 @@ public class RaceManager {
         return accepted[0];
     }
 
-    private boolean sameRoom(Ubication a, Ubication b) {
-        return a.getRoomCode() != null && a.getRoomCode().equalsIgnoreCase(b.getRoomCode());
+    private static String key(String roomCode, String runnerId) {
+        return roomCode + "|" + runnerId;
     }
 
     public Collection<Ubication> getGlobalState() {
@@ -129,17 +162,30 @@ public class RaceManager {
                 .toList();
     }
 
-    public Ubication getUbication(String runnerId) {
-        return raceState.get(runnerId);
+    public Ubication getUbication(String roomCode, String runnerId) {
+        if (roomCode == null || runnerId == null) {
+            return null;
+        }
+        return raceState.get(key(roomCode.trim().toUpperCase(java.util.Locale.ROOT), runnerId));
     }
 
-    /** Borra las posiciones de salas que ya no existen o que llevan mucho sin actualizarse. */
+    /**
+     * Borra las posiciones de salas que ya no existen y las que llevan mucho sin actualizarse. Las de una
+     * carrera EN CURSO se conservan: si se borraran, el siguiente paquete volvería a ser "el primero" y
+     * podría aparecer en cualquier lugar.
+     */
     public int cleanup(Collection<String> removedRooms, long now) {
         int before = raceState.size();
-        raceState.values().removeIf(u ->
-                (u.getRoomCode() != null && removedRooms.stream().anyMatch(c -> c.equalsIgnoreCase(u.getRoomCode())))
-                        || now - u.getReceivedAt() > STALE_POSITION_MS
-                        || !roomService.roomExists(u.getRoomCode()));
+        raceState.values().removeIf(u -> {
+            if (u.getRoomCode() != null && removedRooms.stream().anyMatch(c -> c.equalsIgnoreCase(u.getRoomCode()))) {
+                return true;
+            }
+            Optional<Room> room = roomService.getRoom(u.getRoomCode());
+            if (room.isEmpty()) {
+                return true;
+            }
+            return room.get().getStatus() != Room.RoomStatus.IN_PROGRESS && now - u.getReceivedAt() > STALE_POSITION_MS;
+        });
         return before - raceState.size();
     }
 
