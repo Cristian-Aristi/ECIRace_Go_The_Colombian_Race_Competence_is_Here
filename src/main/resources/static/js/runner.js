@@ -388,8 +388,25 @@ function conectarWebSocket() {
 
         // Si se perdió el socket durante la carrera, nos ponemos al día con el estado actual
         consultarEstadoSala();
-    }, function () {
+    }, function (error) {
         isWsConnected = false;
+        // Errores definitivos del servidor (frame ERROR): reintentar no sirve, así que no se entra en bucle
+        const motivo = (error && error.headers && error.headers.message) || '';
+        if (/sesi[oó]n inv[aá]lida|iniciar sesi[oó]n/i.test(motivo)) {
+            log('Tu sesión venció. Vuelve a iniciar sesión.', 'error');
+            Session.clear();
+            Session.requireLogin(roomCode);
+            return;
+        }
+        if (/no tienes acceso/i.test(motivo)) {
+            if (wsStatusDisplay) {
+                wsStatusDisplay.innerText = "SIN ACCESO";
+                wsStatusDisplay.className = 'g-pill g-pill--red';
+            }
+            UI.toast('Ya no estás inscrito en esta sala. Volviendo al lobby...', 'error');
+            setTimeout(() => { window.location.href = 'lobby.html'; }, 2500);
+            return;
+        }
         // stomp.js llama a este callback tanto si falla la conexión inicial como si se cae el socket después
         if (wsStatusDisplay) {
             wsStatusDisplay.innerText = "RECONECTANDO...";

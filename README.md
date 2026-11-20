@@ -232,10 +232,10 @@ ngrok http 8080
 
 Abre la URL `https://...ngrok...` en el computador y en los celulares. El cliente detecta HTTPS y se conecta automáticamente por `wss://`.
 
-Como el servidor solo acepta su propio origen, agrega la URL del túnel antes de arrancar:
+El WebSocket acepta conexiones cuyo `Origin` tenga el mismo host que pidió el navegador, aunque el túnel cambie `https` por `http` o reescriba la cabecera `Host` (se usa `X-Forwarded-Host`). Con ngrok, devtunnels o cloudflared no hace falta configurar nada. Solo si el front se sirve desde **otro dominio** hay que agregarlo:
 
 ```bash
-ECIRACE_ALLOWED_ORIGINS=https://tu-subdominio.ngrok-free.app ./mvnw spring-boot:run
+ECIRACE_ALLOWED_ORIGINS=https://otro-dominio.com ./mvnw spring-boot:run
 ```
 
 Para el login con Google desde el túnel, añade también esa URL como *origen de JavaScript autorizado* del client ID (ver [Seguridad](#-seguridad)).
@@ -305,7 +305,7 @@ En el Sprint 9 se hicieron tres rondas de auditoría de seguridad de la API y se
 | Datos personales | El correo solo lo ve su dueño (`/api/auth/me`). El perfil público, la clasificación y la lista de salas no exponen correos, rosters ni ubicaciones |
 | Abuso | Límite por IP (10 registros o salas en ráfaga y luego 1 cada 6 s; 120 peticiones en ráfaga y luego 20/s), calculado sobre la ruta ya decodificada. Máximo de salas (`ECIRACE_ROOMS_MAX`) y de salas abiertas por creador (`ECIRACE_ROOMS_PER_CREATOR`). Un piloto ocupa una sola sala de espera, y el host puede retirar a quien ocupe un cupo (no puede volver). Limpieza automática de salas y posiciones, y mensajes STOMP de máximo 16 KB |
 | Navegador | CSP estricta (solo scripts propios y el SDK de Google), `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy` y `Permissions-Policy`. Leaflet y stomp.js se sirven localmente y no hay JavaScript en línea |
-| CORS | Solo el mismo origen. Orígenes extra con `ECIRACE_ALLOWED_ORIGINS` |
+| CORS | Solo el mismo origen. Orígenes extra con `ECIRACE_ALLOWED_ORIGINS`. El WebSocket valida que el host del `Origin` sea el que pidió el navegador (sin importar `http`/`https` ni el puerto, para que funcione detrás de túneles) y rechaza otros sitios con 403 |
 | Infraestructura | Actuator en el puerto 8081 (perfil `cloud`), alcanzable solo por Caddy. Caddy rechaza rutas con `;` y borra la cabecera `Forwarded` del cliente. El servidor toma la IP real con `server.forward-headers-strategy=native`: solo cree en `X-Forwarded-For` si la petición llega desde la red interna (Caddy). El contenedor corre como usuario sin privilegios y la contraseña de métricas viaja a AWS solo como hash bcrypt. Las GitHub Actions están fijadas por SHA y el CD solo publica desde `main` |
 | Laboratorio | `/admin/config` exige un token aleatorio sin valor por defecto (comparación en tiempo constante) y el servidor local solo escucha en `127.0.0.1` |
 
@@ -347,7 +347,7 @@ Sin client ID, el botón de Google no aparece y solo está disponible el ingreso
 ./mvnw test
 ```
 
-Hay **90 pruebas automatizadas** organizadas en las siguientes suites:
+Hay **93 pruebas automatizadas** organizadas en las siguientes suites:
 
 | Suite | Pruebas | Qué verifica |
 |---|---|---|
@@ -356,6 +356,7 @@ Hay **90 pruebas automatizadas** organizadas en las siguientes suites:
 | `RoomServiceTest` | 18 | Salas (códigos, duplicados, cupo), clave del host, quién puede ver la sala, una sala de espera por piloto, retirar pilotos, cupo por creador, límite de salas y limpieza |
 | `RateLimitBypassTest` | 2 | El límite de registros no se esquiva con rutas codificadas (`%67uest`), `;x` o barras dobles |
 | `RankedRaceTest` | 5 | Solo cuentan para la clasificación las carreras con 2 pilotos o más, de 1 minuto o más y con salida a 150 m o más de la meta |
+| `WebSocketOriginTest` | 3 | El WebSocket acepta el mismo host detrás de túneles HTTPS (ngrok, devtunnels) y rechaza otros sitios |
 | `GameLoopServiceTest` | 2 | Resolución de colisiones según el umbral de distancia |
 | `AuthServiceTest` | 11 | Invitados sin suplantación, flujo de Google, cambio de *tag* con rotación de sesión y clasificación |
 | `SecurityTokensTest` | 7 | Tokens de sesión (firma, rotación, manipulación) y verificación del ID token de Google (audiencia, emisor, firma, expiración, correo) |

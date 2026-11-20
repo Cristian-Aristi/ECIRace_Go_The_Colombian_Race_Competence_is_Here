@@ -58,8 +58,12 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         // Solo el endpoint nativo (el de SockJS ya no lo usa ningún cliente).
-        // Sin orígenes configurados, Spring acepta únicamente el MISMO origen que sirve la página.
-        registry.addEndpoint("/race-ws-native").setAllowedOriginPatterns(allowedOrigins);
+        // El origen lo controla SameHostOriginInterceptor: mismo host que pidió el navegador (también
+        // detrás de un túnel HTTPS) u orígenes de ECIRACE_ALLOWED_ORIGINS. El chequeo propio de Spring
+        // exigía además el mismo esquema y puerto, y bloqueaba a los celulares conectados por ngrok.
+        registry.addEndpoint("/race-ws-native")
+                .setAllowedOriginPatterns("*")
+                .addInterceptors(new SameHostOriginInterceptor(allowedOrigins));
     }
 
     @Override

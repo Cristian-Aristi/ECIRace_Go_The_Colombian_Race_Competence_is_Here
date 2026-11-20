@@ -40,9 +40,9 @@ public class SecurityHeadersFilter extends OncePerRequestFilter {
     }
 
     static String csp(HttpServletRequest request) {
-        // WebSocket del mismo host (algunos navegadores no incluyen ws/wss en 'self')
-        String host = request.getHeader("Host");
-        String ws = (host != null && SAFE_HOST.matcher(host).matches()) ? " wss://" + host + " ws://" + host : "";
+        // WebSocket del mismo host (algunos navegadores no incluyen ws/wss en 'self'). Si un proxy o túnel
+        // reescribió Host, el host público llega en X-Forwarded-Host.
+        String ws = wsSources(request.getHeader("Host")) + wsSources(request.getHeader("X-Forwarded-Host"));
         return "default-src 'self'; "
                 + "script-src 'self' https://accounts.google.com/gsi/client; "
                 + "style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style; "
@@ -51,5 +51,13 @@ public class SecurityHeadersFilter extends OncePerRequestFilter {
                 + "connect-src 'self'" + ws + " https://accounts.google.com/gsi/; "
                 + "frame-src https://accounts.google.com/gsi/; "
                 + "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+    }
+
+    private static String wsSources(String host) {
+        if (host == null) {
+            return "";
+        }
+        String h = host.contains(",") ? host.substring(0, host.indexOf(',')).trim() : host.trim();
+        return SAFE_HOST.matcher(h).matches() ? " wss://" + h + " ws://" + h : "";
     }
 }
