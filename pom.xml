@@ -29,6 +29,17 @@
 	<properties>
 		<java.version>21</java.version>
 		<nimbus-jose-jwt.version>10.9.1</nimbus-jose-jwt.version>
+		<jacoco.version>0.8.13</jacoco.version>
+		<!-- SonarCloud: la organización y la llave del proyecto se pasan aquí para no repetirlas en el workflow -->
+		<sonar.organization>cristian-aristi</sonar.organization>
+		<sonar.projectKey>Cristian-Aristi_ECIRace_Go_The_Colombian_Race_Competence_is_Here</sonar.projectKey>
+		<sonar.host.url>https://sonarcloud.io</sonar.host.url>
+		<!-- Se analiza el backend y el frontend propio; las librerías de terceros (vendor/) no son código nuestro -->
+		<sonar.sources>pom.xml,src/main/java,src/main/resources</sonar.sources>
+		<sonar.tests>src/test/java,src/test/js</sonar.tests>
+		<sonar.exclusions>src/main/resources/static/vendor/**</sonar.exclusions>
+		<sonar.coverage.jacoco.xmlReportPaths>${project.build.directory}/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
+		<sonar.javascript.lcov.reportPaths>coverage/frontend/lcov.info</sonar.javascript.lcov.reportPaths>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -88,6 +99,27 @@
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
+			</plugin>
+			<!-- Cobertura de las pruebas del backend: deja target/site/jacoco/jacoco.xml para SonarCloud -->
+			<plugin>
+				<groupId>org.jacoco</groupId>
+				<artifactId>jacoco-maven-plugin</artifactId>
+				<version>${jacoco.version}</version>
+				<executions>
+					<execution>
+						<id>preparar-agente</id>
+						<goals>
+							<goal>prepare-agent</goal>
+						</goals>
+					</execution>
+					<execution>
+						<id>reporte-cobertura</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>report</goal>
+						</goals>
+					</execution>
+				</executions>
 			</plugin>
 		</plugins>
 	</build>
