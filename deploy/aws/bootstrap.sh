@@ -86,5 +86,7 @@ printf 'basic_auth {\n\tmetrics %s\n}\n' "$HASH" > metrics_auth.caddy
 # --- 6. Levantar (siempre con la última imagen) -----------------------------------------
 docker compose pull --quiet
 docker compose up -d --remove-orphans
+# Caddy lee el Caddyfile solo al arrancar: se recrea para que tome siempre la configuración actual
+docker compose up -d --no-deps --force-recreate caddy
 docker image prune -f >/dev/null
 echo "=== listo: https://$MAIN_DOMAIN ==="
