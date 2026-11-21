@@ -1,0 +1,48 @@
+name: ECIRace GO - Análisis SonarCloud (reutilizable)
+
+# Workflow reutilizable: cualquier pipeline del repo lo llama con "uses:" y le pasa el token.
+# Corre las pruebas del backend (JaCoCo) y del frontend (Vitest + Istanbul) y sube ambos
+# reportes de cobertura a SonarCloud en un solo análisis.
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        description: Versión de Java para compilar y probar
+        type: string
+        default: '21'
+    secrets:
+      SONAR_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  sonar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout con todo el historial
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Sonar necesita el historial completo para saber qué código es nuevo y quién lo cambió
+          fetch-depth: 0
+
+      - name: Configurar JDK ${{ inputs.java-version }} (Eclipse Temurin)
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          java-version: ${{ inputs.java-version }}
+          distribution: 'temurin'
+          cache: maven
+
+      # El runner de GitHub ya trae Node.js; solo se instalan las dependencias fijadas en package-lock.json
+      - name: Pruebas del frontend con cobertura
+        run: |
+          node --version
+          npm ci --no-audit --no-fund
+          npm run coverage
+
+      - name: Pruebas del backend con cobertura y análisis en SonarCloud
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: mvn -B clean verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar
