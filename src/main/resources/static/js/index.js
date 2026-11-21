@@ -262,4 +262,4 @@ guestInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') btnEnterG
 googleTagInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') btnConfirmGoogleTag.click(); });
 hostRoomCodeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') btnCreateRoomAndGo.click(); });
 
-iniciarGoogle();
+void iniciarGoogle();

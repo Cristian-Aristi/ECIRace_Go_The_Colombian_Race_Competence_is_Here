@@ -277,7 +277,7 @@ function enterWaitingRoom(roomCode) {
     UI.sfx.join();
     try { waitingRoomSection.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {}
 
-    refreshRoomState();
+    void refreshRoomState();
     if (roomPollInterval) clearInterval(roomPollInterval);
     roomPollInterval = setInterval(refreshRoomState, 2000);
 
@@ -307,7 +307,7 @@ async function refreshRoomState() {
         if (res.status === 403 || res.status === 404) {
             // El host nos retiró, entramos a otra sala desde otro equipo o la sala expiró
             UI.toast(res.status === 404 ? 'La sala ya no existe.' : 'Ya no estás en esta sala.', 'warn');
-            exitWaitingRoom();
+            void exitWaitingRoom();
             return;
         }
         if (!res.ok) return;
@@ -436,7 +436,7 @@ function conectarSocketDeSala(roomCode) {
 }
 
 btnLeaveWaitingRoom.addEventListener('click', () => {
-    exitWaitingRoom();
+    void exitWaitingRoom();
 });
 
 btnGoDashboard.addEventListener('click', () => {
@@ -501,7 +501,7 @@ const btnCloseLeaderboard = document.getElementById('btnCloseLeaderboard');
 const btnDoneLeaderboard = document.getElementById('btnDoneLeaderboard');
 btnLeaderboard.addEventListener('click', () => {
     leaderboardModal.style.display = "flex";
-    cargarClasificacion();
+    void cargarClasificacion();
 });
 
 // Top de pilotos por victorias (GET /api/auth/leaderboard)
@@ -592,8 +592,8 @@ document.querySelectorAll('#activeRoomsContainer .room-pill[data-code]').forEach
     pill.addEventListener('click', () => window.selectRoom(pill.dataset.code));
 });
 
-cargarPerfil();
-cargarSalasActivas();
+void cargarPerfil();
+void cargarSalasActivas();
 setInterval(cargarSalasActivas, 5000);
 
 window.selectVehicle(selectedVehicleMemory);

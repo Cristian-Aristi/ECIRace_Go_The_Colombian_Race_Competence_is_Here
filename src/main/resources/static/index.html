@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="css/game.css?v=7">
 </head>
 <body>
-<canvas id="scene" aria-hidden="true"></canvas>
+<canvas id="scene" aria-hidden="true" tabindex="-1"></canvas>
 
 <main class="game-shell game-shell--index">
 
@@ -138,6 +138,7 @@
         <p class="g-copy" style="margin:0; font-size:1rem; color: var(--text-dim);">3 a 16 caracteres: letras, números, punto, guion o guion bajo (sin espacios).</p>
         <div class="g-field">
             <span class="g-ico" data-icon="pencil"></span>
+            <label for="googleTagInput" class="sr-only">Tag de piloto</label>
             <input type="text" id="googleTagInput" placeholder="Nombre de piloto" maxlength="16" autocomplete="off">
         </div>
         <p class="g-copy" id="googleTagError" style="display:none; margin:0; color: var(--color-alert, #ff4b55);"></p>

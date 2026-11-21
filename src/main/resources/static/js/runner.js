@@ -93,7 +93,7 @@ function actualizarPistaMeta(lat, lng) {
     const carro = document.getElementById('trackCarImg');
     if (!metaLatGlobal || !metaLonGlobal || !etiqueta || !carro) return;
     const d = calcularDistanciaMetros(lat, lng, metaLatGlobal, metaLonGlobal);
-    if (!isFinite(d)) return;
+    if (!Number.isFinite(d)) return;
     if (distanciaInicialMeta === null || d > distanciaInicialMeta) distanciaInicialMeta = Math.max(d, 1);
     const avance = Math.max(0, Math.min(1, 1 - d / distanciaInicialMeta));
     carro.style.left = `${4 + avance * 88}%`;
@@ -241,7 +241,7 @@ function liberarWakeLock() {
 }
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && (watchId !== null || simInterval !== null || window.simPathInterval)) {
-        solicitarWakeLock();
+        void solicitarWakeLock();
     }
 });
 
@@ -387,7 +387,7 @@ function conectarWebSocket() {
         });
 
         // Si se perdió el socket durante la carrera, nos ponemos al día con el estado actual
-        consultarEstadoSala();
+        void consultarEstadoSala();
     }, function (error) {
         isWsConnected = false;
         // Errores definitivos del servidor (frame ERROR): reintentar no sirve, así que no se entra en bucle
@@ -481,7 +481,7 @@ btnStartGps.addEventListener('click', () => {
     if (!window.isSecureContext) {
         log("⚠️ Esta página no es HTTPS: el navegador del celular bloqueará el GPS. Abre la app por el enlace https (ngrok) o usa el simulador.", "warn");
     }
-    solicitarWakeLock();
+    void solicitarWakeLock();
 
     watchId = navigator.geolocation.watchPosition((pos) => {
         // Un fix con mucho error (típico al inicio o bajo techo) hace "saltar" al carro por el mapa
@@ -490,14 +490,14 @@ btnStartGps.addEventListener('click', () => {
             log(`GPS poco preciso (± ${Math.round(pos.coords.accuracy)} m), esperando una señal mejor...`, 'warn');
             return;
         }
-        let speedKmh = pos.coords.speed !== null && !isNaN(pos.coords.speed) ? pos.coords.speed * 3.6 : null;
+        let speedKmh = pos.coords.speed !== null && !Number.isNaN(pos.coords.speed) ? pos.coords.speed * 3.6 : null;
         // Algunos teléfonos no reportan velocidad: se estima con la lectura anterior del GPS
         if (speedKmh === null) {
             speedKmh = 0;
             if (ultimoFixGps && pos.timestamp > ultimoFixGps.ts) {
                 const seg = (pos.timestamp - ultimoFixGps.ts) / 1000;
                 const metros = calcularDistanciaMetros(ultimoFixGps.lat, ultimoFixGps.lng, pos.coords.latitude, pos.coords.longitude);
-                if (seg >= 0.5 && isFinite(metros)) speedKmh = Math.min(99, (metros / seg) * 3.6);
+                if (seg >= 0.5 && Number.isFinite(metros)) speedKmh = Math.min(99, (metros / seg) * 3.6);
             }
         }
         ultimoFixGps = { lat: pos.coords.latitude, lng: pos.coords.longitude, ts: pos.timestamp };
@@ -555,7 +555,7 @@ btnToggleSim.addEventListener('click', () => {
         btnStopGps.disabled = false;
         UI.setLabel(btnToggleSim, "Detener simulador");
         log("Simulador de ruta iniciado.", "info");
-        solicitarWakeLock();
+        void solicitarWakeLock();
 
         simInterval = setInterval(() => {
             const p = siguientePuntoSimulado();
@@ -604,7 +604,7 @@ if (btnSimulateWin) {
 
             enviarTelemetria(construirPayload(startLat, startLon));
             updateUI(startLat, startLon, 1, 0, 'ENFRIANDO RADAR...');
-            solicitarWakeLock();
+            void solicitarWakeLock();
 
             setTimeout(() => {
                 UI.setLabel(btnSimulateWin, "Trotando a la meta (11 km/h)...");
@@ -659,6 +659,6 @@ Session.config().then(cfg => {
 });
 
 conectarWebSocket();
-consultarEstadoSala();
+void consultarEstadoSala();
 // Respaldo por si el WebSocket se cae justo cuando cambia el estado (inicio / fin de carrera)
 statusPollInterval = setInterval(consultarEstadoSala, 4000);

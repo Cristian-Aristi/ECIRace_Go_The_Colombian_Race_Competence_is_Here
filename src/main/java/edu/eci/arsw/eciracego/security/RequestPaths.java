@@ -24,8 +24,7 @@ public final class RequestPaths {
 
     public static String of(HttpServletRequest request) {
         try {
-            String path = HELPER.getLookupPathForRequest(request);
-            return path != null ? path : "";
+            return HELPER.getLookupPathForRequest(request);
         } catch (IllegalArgumentException e) {
             return request.getRequestURI() != null ? request.getRequestURI() : "";
         }

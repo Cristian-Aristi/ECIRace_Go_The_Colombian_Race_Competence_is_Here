@@ -569,7 +569,7 @@
     // ------------------------------------------------------------------
     function rng(seed) {
         return function () {
-            seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+            seed >>>= 0; seed = (seed + 0x6D2B79F5) >>> 0;
             let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
             t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
             return ((t ^ t >>> 14) >>> 0) / 4294967296;
@@ -661,8 +661,8 @@
         const META_CADA = 820;     // distancia entre líneas de meta
 
         function hash(i, k) {
-            let h = (i * 374761393 + (k || 0) * 668265263) | 0;
-            h = (h ^ (h >>> 13)) * 1274126177 | 0;
+            let h = (i * 374761393 + (k || 0) * 668265263) >>> 0;
+            h = ((h ^ (h >>> 13)) * 1274126177) >>> 0;
             return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
         }
 
