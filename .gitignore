@@ -40,3 +40,8 @@ __pycache__/
 
 ### Secretos locales (los genera scripts/lab.py) ###
 .env
+
+### Pruebas del frontend ###
+node_modules/
+.nyc_output/
+coverage/

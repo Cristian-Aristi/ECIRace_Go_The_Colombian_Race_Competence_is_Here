@@ -30,3 +30,12 @@ jobs:
 
       - name: Empaquetar Artefacto JAR
         run: mvn package -DskipTests
+        
+  # Calidad del código: reutiliza el workflow de SonarCloud solo si el build y las pruebas pasaron
+  sonarcloud:
+    needs: build-and-verify
+    uses: ./.github/workflows/sonar-reusable.yml
+    with:
+      java-version: '21'
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

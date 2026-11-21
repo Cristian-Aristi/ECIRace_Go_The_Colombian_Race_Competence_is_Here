@@ -1,0 +1,15 @@
+{
+  "name": "ecirace-go-frontend-tests",
+  "private": true,
+  "description": "Pruebas del frontend de ECIRace GO (jsdom + Vitest) con cobertura Istanbul para SonarCloud",
+  "scripts": {
+    "test": "vitest run",
+    "coverage": "node -e \"require('fs').rmSync('.nyc_output',{recursive:true,force:true})\" && vitest run && nyc report --temp-dir .nyc_output --report-dir coverage/frontend --reporter=lcov --reporter=text-summary"
+  },
+  "devDependencies": {
+    "istanbul-lib-instrument": "^6.0.3",
+    "jsdom": "^26.1.0",
+    "nyc": "^17.1.0",
+    "vitest": "^3.2.7"
+  }
+}
