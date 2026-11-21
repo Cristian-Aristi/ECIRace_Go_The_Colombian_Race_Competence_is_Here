@@ -49,18 +49,15 @@ public class RaceManager {
 
     /** Última posición válida de cada corredor EN CADA SALA (clave "SALA|piloto"). */
     private final ConcurrentHashMap<String, Ubication> raceState = new ConcurrentHashMap<>();
-    private LongSupplier clock = System::currentTimeMillis;
+    private final LongSupplier clock;
+    private final AntiCheatEngine antiCheatEngine;
+    private final RoomService roomService;
+    private final UserProfileRepository userProfileRepository;
 
     @Autowired
-    private AntiCheatEngine antiCheatEngine;
-
-    @Autowired
-    private RoomService roomService;
-
-    @Autowired
-    private UserProfileRepository userProfileRepository;
-
-    public RaceManager() {
+    public RaceManager(AntiCheatEngine antiCheatEngine, RoomService roomService,
+                       UserProfileRepository userProfileRepository) {
+        this(antiCheatEngine, roomService, userProfileRepository, System::currentTimeMillis);
     }
 
     /** Para pruebas: dependencias y reloj explícitos. */

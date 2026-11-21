@@ -41,7 +41,7 @@ class AuthServiceTest {
                 .filter(p -> inv.getArgument(0).equals(p.getGoogleSubject())).findFirst());
         Mockito.doAnswer(inv -> db.remove(((UserProfile) inv.getArgument(0)).getUsername())).when(repo).delete(any());
         Mockito.when(repo.findTop50ByOrderByWinsCountDescRacesCountDescUsernameAsc()).thenAnswer(inv ->
-                db.values().stream().sorted((a, b) -> b.getWinsCount() - a.getWinsCount()).toList());
+                db.values().stream().sorted((a, b) -> Integer.compare(b.getWinsCount(), a.getWinsCount())).toList());
 
         authService = new AuthServiceImpl(repo);
     }
