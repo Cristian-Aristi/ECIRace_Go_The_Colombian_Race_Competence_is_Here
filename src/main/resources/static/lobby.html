@@ -12,7 +12,7 @@
     <link rel="stylesheet" href="css/game.css?v=7">
 </head>
 <body>
-<canvas id="scene" aria-hidden="true"></canvas>
+<canvas id="scene" aria-hidden="true" tabindex="-1"></canvas>
 
 <main class="game-shell game-shell--lobby">
 
@@ -202,6 +202,7 @@
         <p class="g-copy" style="margin:0;">Tu nuevo apodo de piloto. Tus carreras y victorias se conservan.</p>
         <div class="g-field">
             <span class="g-ico" data-icon="pencil"></span>
+            <label for="newTagInput" class="sr-only">Nuevo tag de piloto</label>
             <input type="text" id="newTagInput" placeholder="Nuevo nombre" maxlength="16" autocomplete="off">
         </div>
         <div class="g-two">

@@ -416,7 +416,7 @@ function aplicarEstadoDeSala(room) {
     renderizarListaCorredores();
     programarLeaderboard();
     if (room.status === 'IN_PROGRESS' && ultimoRosterConocido.some(r => !corredores[r])) {
-        cargarPosicionesConocidas();
+        void cargarPosicionesConocidas();
     }
 
     if (room.status === 'FINISHED' && !carreraTerminada) {
@@ -570,7 +570,7 @@ lbToggle.addEventListener('click', () => {
 });
 
 function formatearDistancia(m) {
-    if (!isFinite(m)) return '--';
+    if (!Number.isFinite(m)) return '--';
     return m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`;
 }
 
@@ -606,7 +606,7 @@ function renderizarLeaderboard() {
     const nuevoRank = {};
     // Solo hay flechas si el conjunto de corredores con señal es el mismo que en el render anterior;
     // si entró o salió alguien, las posiciones se corren sin que haya habido un adelantamiento.
-    const firma = filas.filter(f => f.conSenal).map(f => f.id).sort().join('|');
+    const firma = filas.filter(f => f.conSenal).map(f => f.id).sort((a, b) => a.localeCompare(b)).join('|');
     const hayAdelantamientos = firma === firmaAnterior;
     firmaAnterior = firma;
     // Referencia para la diferencia "+X m": el corredor que está más cerca de la meta
@@ -684,5 +684,7 @@ function programarLeaderboard() {
 }
 
 // Primero se confirma el acceso a la sala (REST) y solo entonces se abre el WebSocket
-refrescarRosterDeSala().then(() => { if (!avisoSinAcceso) conectarWebSocket(); });
+refrescarRosterDeSala()
+    .then(() => { if (!avisoSinAcceso) conectarWebSocket(); })
+    .catch(() => { /* se reintenta en el siguiente ciclo del polling */ });
 setInterval(refrescarRosterDeSala, 2000);
