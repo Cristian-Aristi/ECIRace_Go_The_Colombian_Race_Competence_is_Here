@@ -242,6 +242,49 @@ def ssm_run(cfg, commands, timeout=600):
     raise SystemExit('Tiempo agotado esperando el comando SSM.')
 
 
+def public_url(cfg):
+    """URL publica: el dominio propio si existe; si no, la que publica el stack."""
+    return f"https://{cfg['domain']}" if cfg.get('domain') else outputs(cfg)['Url']
+
+
+def deploy_env(cfg):
+    """Mismo deploy.env que escribe el UserData, armado con la configuracion local."""
+    return (f"APP_IMAGE={cfg.get('image', 'ghcr.io/cristian-aristi/ecirace-go:latest')}\n"
+            f"METRICS_HASH_B64={base64.b64encode(cfg['metrics_hash'].encode()).decode()}\n"
+            f"CUSTOM_DOMAIN={cfg.get('domain', '')}\n"
+            f"GOOGLE_CLIENT_ID={cfg.get('google_client_id', '')}\n"
+            f"RATE_LIMIT_ENABLED={'false' if cfg.get('rate_limit') == 'off' else 'true'}\n"
+            f"DEMO_TOOLS={'true' if cfg.get('demo_tools') == 'on' else 'false'}\n")
+
+
+def sync_and_start(cfg, attempts=12):
+    """Sube a la instancia los archivos de despliegue del repo y levanta los contenedores.
+
+    El UserData solo cambia cuando un deploy de CloudFormation termina bien; si un deploy se revierte,
+    la instancia arrancaria con archivos viejos. Asi, up y release siempre dejan la version del repo."""
+    env_b64 = base64.b64encode(deploy_env(cfg).encode()).decode()
+    commands = [
+        'set -e',
+        'cloud-init status --wait >/dev/null 2>&1 || true',   # que termine el arranque del UserData
+        'cd /opt/ecirace',
+        'umask 077',
+        f"echo '{packed('docker-compose.yml')}' | base64 -d | gunzip > docker-compose.yml",
+        f"echo '{packed('Caddyfile')}' | base64 -d | gunzip > Caddyfile",
+        f"echo '{packed('bootstrap.sh')}' | base64 -d | gunzip > bootstrap.sh",
+        f"echo '{env_b64}' | base64 -d > deploy.env",
+        'bash bootstrap.sh 2>&1 | tail -n 12',
+    ]
+    for i in range(attempts):
+        try:
+            print(ssm_run(cfg, commands, timeout=600))
+            return
+        except SystemExit as e:
+            if i == attempts - 1:
+                raise
+            print(f'SSM aun no responde ({e}); reintentando en 15 s...')
+            time.sleep(15)
+
+
 # ------------------------------------------------------------------ comandos
 def cmd_check(a, cfg):
     need_credentials(cfg)
@@ -318,8 +361,11 @@ def cmd_up(a, cfg):
     if instance_state(cfg, out['InstanceId']) != 'running':
         aws(cfg, 'ec2', 'start-instances', '--instance-ids', out['InstanceId'])
         aws(cfg, 'ec2', 'wait', 'instance-running', '--instance-ids', out['InstanceId'])
-    wait_healthy(out['Url'])
-    print(f'\nEstado: UP. Jugadores: {out["Url"]}\nAl terminar: python scripts/aws.py down')
+    print('Sincronizando la configuracion del repo y descargando la ultima imagen...')
+    sync_and_start(cfg)
+    url = public_url(cfg)
+    wait_healthy(url)
+    print(f'\nEstado: UP. Jugadores: {url}\nAl terminar: python scripts/aws.py down')
 
 
 def cmd_down(a, cfg):
@@ -356,9 +402,9 @@ def cmd_status(a, cfg):
 
 def cmd_release(a, cfg):
     need_credentials(cfg)
-    print('Descargando la ultima imagen y reiniciando contenedores...')
-    print(ssm_run(cfg, ['cd /opt/ecirace && bash bootstrap.sh 2>&1 | tail -n 15']))
-    wait_healthy(outputs(cfg)['Url'], seconds=300)
+    print('Sincronizando la configuracion, descargando la ultima imagen y reiniciando contenedores...')
+    sync_and_start(cfg)
+    wait_healthy(public_url(cfg), seconds=300)
 
 
 def cmd_logs(a, cfg):
